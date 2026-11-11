@@ -639,7 +639,7 @@ void bk_textarea_html_draw(BKNode *n)
   const int px = ta_pad_x(n), py = ta_pad_y(n), lh = ta_line_h(n);
   const int b = (int)bw;
   bk_clip_push(n->x + b, n->y + b, n->w - 2 * b, n->h - 2 * b);
-  t->scroll = BK_CLAMP(t->scroll, 0, BK_MAX(0, t->nlines - 1));
+  t->scroll = BK_CLAMP(t->scroll, 0, BK_MAX(0, t->nlines - visible_lines(n)));
   int sa = -1, sb = -1;
   const bool sel = BK_textarea_selection(n, &sa, &sb);
   const float x0 = (float)(n->x + px);
@@ -752,7 +752,7 @@ static void ta_draw(BKNode *n)
   bk_widget_textbut(&w, &r, st, n->corners);
   const int p = bk_pad(), lh = ta_line_h(n);
   bk_clip_push(n->x + 2, n->y + 2, n->w - 4, n->h - 4);
-  t->scroll = BK_CLAMP(t->scroll, 0, BK_MAX(0, t->nlines - 1));
+  t->scroll = BK_CLAMP(t->scroll, 0, BK_MAX(0, t->nlines - visible_lines(n)));
   int a = -1, b = -1;
   BK_textarea_selection(n, &a, &b);
   const float x0 = (float)(n->x + p);
