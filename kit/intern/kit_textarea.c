@@ -33,11 +33,15 @@ typedef struct TAData {
   int nlines, caplines;
   Span *spans;
   int nspans;
-  bool rows_set; /* "rows" was given (the browser look defaults to 2) */
+  bool rows_set;  /* "rows" was given (the browser look defaults to 2) */
+  bool edge_jump; /* "edge_jump": Up past the first line goes to the start, Down past the last to
+                   * the end (as browsers do) */
   BKImeComp ime; /* the IME composition at the caret */
 } TAData;
 
 #define TA(n) ((TAData *)(n)->ext)
+
+static float caret_x(const TAData *t, int off);
 
 static int line_h(void)
 {
@@ -45,10 +49,12 @@ static int line_h(void)
 }
 
 /* Browser look (Chrome's <textarea>): 1px border + 2px padding, 15px lines of
- * 13.33px text. Blender look: the text-field margins and 0.8 unit lines. */
+ * 13.33px text. Blender look: the text-field margins and 0.8 unit lines, taller
+ * for larger text ("font_scale"). */
 static int ta_line_h(const BKNode *n)
 {
-  return BK_HTML(n) ? bk_iround(bk_hpx(15.0f)) : line_h();
+  return BK_HTML(n) ? bk_iround(bk_hpx(15.0f)) :
+                      bk_iround(0.8f * bk_unit() * BK_MAX(1.0f, n->font_scale));
 }
 static int ta_pad_x(const BKNode *n)
 {
@@ -63,8 +69,9 @@ static int ta_pad_y(const BKNode *n)
 static float ta_font_begin(const BKNode *n)
 {
   const float saved = bk_text_scale;
+  bk_text_scale = n->font_scale > 0.0f ? n->font_scale : 1.0f;
   if (BK_HTML(n)) {
-    bk_text_scale = (n->font_scale > 0.0f ? n->font_scale : 1.0f) * BK_HTML_FONT;
+    bk_text_scale *= BK_HTML_FONT;
     bk_html_text_scale = bk_text_scale;
   }
   return saved;
@@ -203,9 +210,7 @@ int BK_textarea_caret(BKNode *n)
 
 void BK_textarea_set_caret(BKNode *n, int off)
 {
-  TA(n)->caret = BK_CLAMP(off, 0, TA(n)->len);
-  TA(n)->anchor = -1;
-  bk_invalidate(n);
+  BK_textarea_set_selection(n, -1, off);
 }
 
 int BK_textarea_selection(BKNode *n, int *a, int *b)
@@ -222,8 +227,11 @@ int BK_textarea_selection(BKNode *n, int *a, int *b)
 void BK_textarea_set_selection(BKNode *n, int a, int b)
 {
   TAData *t = TA(n);
-  t->anchor = BK_CLAMP(a, 0, t->len);
+  t->anchor = a < 0 ? -1 : BK_CLAMP(a, 0, t->len);
   t->caret = BK_CLAMP(b, 0, t->len);
+  const float saved = ta_font_begin(n); /* Up/Down go on from the new column */
+  t->want_x = caret_x(t, t->caret);
+  bk_text_scale = saved;
   bk_invalidate(n);
 }
 
@@ -486,9 +494,13 @@ static int ta_key(BKNode *n, BKEvent *e)
     if (!d) {
       d = (bk_keysym_is(ks, "Prior") ? -1 : 1) * visible_lines(n);
     }
-    const int target = BK_CLAMP(line + d, 0, t->nlines - 1);
-    move(t, col_at(t, target, t->want_x), shift);
-    keep_x = true;
+    if (t->edge_jump && (line + d < 0 || line + d >= t->nlines)) {
+      move(t, line + d < 0 ? 0 : t->len, shift);
+    }
+    else {
+      move(t, col_at(t, BK_CLAMP(line + d, 0, t->nlines - 1), t->want_x), shift);
+      keep_x = true;
+    }
   }
   else if (bk_keysym_is(ks, "Home")) {
     move(t, ctrl ? 0 : t->lines[line_of(t, t->caret)], shift);
@@ -581,6 +593,10 @@ static int ta_set_num(BKNode *n, const char *key, double v)
     n->rows = (int)v;
     TA(n)->rows_set = true;
     bk_relayout(n);
+    return 1;
+  }
+  if (strcmp(key, "edge_jump") == 0) {
+    TA(n)->edge_jump = v != 0.0;
     return 1;
   }
   return 0;
@@ -734,7 +750,7 @@ static void ta_draw(BKNode *n)
   BKWCol w;
   bk_widget_state(&w, &bk_theme.textfield, st);
   bk_widget_textbut(&w, &r, st, n->corners);
-  const int p = bk_pad(), lh = line_h();
+  const int p = bk_pad(), lh = ta_line_h(n);
   bk_clip_push(n->x + 2, n->y + 2, n->w - 4, n->h - 4);
   t->scroll = BK_CLAMP(t->scroll, 0, BK_MAX(0, t->nlines - 1));
   int a = -1, b = -1;

@@ -59,6 +59,23 @@ impl WKind {
     }
 }
 
+/// A textarea's caret and the other end of its selection, as byte offsets
+/// into its text (`anchor == caret`: nothing selected). The kit does not
+/// wrap: the lines are the text split at `\n`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TextCaret {
+    pub anchor: usize,
+    pub caret: usize,
+}
+
+impl TextCaret {
+    /// The caret at `at`, nothing selected.
+    #[must_use]
+    pub const fn at(at: usize) -> TextCaret {
+        TextCaret { anchor: at, caret: at }
+    }
+}
+
 /// What a form element asks for (compared with the last render to sync).
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct WidgetSpec {
@@ -81,6 +98,12 @@ pub(crate) struct WidgetSpec {
     pub groups: Vec<(usize, String)>,
     /// `<meter>`'s low, high and optimum.
     pub meter: [Option<f64>; 3],
+    /// Text size over the kit's 11px (0: the kit's size): a Blender text
+    /// box's CSS `font-size`.
+    pub font_scale: f32,
+    /// `<textarea bui-edge-jump>`: Up on the first line moves the caret to
+    /// the start, Down on the last line to the end (Shift extends).
+    pub edge_jump: bool,
 }
 
 impl WidgetSpec {
@@ -157,6 +180,8 @@ impl WidgetSpec {
             html: false,
             groups: Vec::new(),
             meter: [None; 3],
+            font_scale: 0.0,
+            edge_jump: false,
         }
     }
 
@@ -257,6 +282,7 @@ impl WidgetSpec {
             }
             "textarea" => {
                 s = WidgetSpec::new(WKind::TextArea, attrs);
+                s.edge_jump = attr(attrs, "bui-edge-jump").is_some();
                 s.text = Some(attr(attrs, "value").map(str::to_owned)
                     .unwrap_or_else(|| d.children.iter().filter_map(|c| match c {
                         AnyElement::Text(t) => Some(t.as_ref()),
@@ -421,6 +447,11 @@ impl Widgets {
             .collect()
     }
 
+    /// The kit node of the textarea `key`.
+    pub(crate) fn textarea(&self, key: Key) -> Option<*mut sys::BKNode> {
+        self.nodes.get(&key).filter(|w| w.spec.kind == WKind::TextArea).map(|w| w.node)
+    }
+
     pub(crate) fn set_value(&mut self, key: Key, v: f64) {
         if let Some(w) = self.nodes.get(&key) {
             self.syncing = true;
@@ -457,6 +488,13 @@ fn sync(n: *mut sys::BKNode, old: Option<&WidgetSpec>, spec: &WidgetSpec) {
                 WKind::Button | WKind::Progress => set_str(c"text", &spec.label),
                 _ => set_str(c"label", &spec.label),
             }
+        }
+        // new nodes start at the kit's size (0) and without the jump
+        if old.map_or(0.0, |o| o.font_scale) != spec.font_scale {
+            set_num(c"font_scale", f64::from(spec.font_scale));
+        }
+        if old.is_some_and(|o| o.edge_jump) != spec.edge_jump {
+            set_num(c"edge_jump", spec.edge_jump as i32 as f64);
         }
         if old.is_none_or(|o| o.placeholder != spec.placeholder) && !spec.placeholder.is_empty() {
             set_str(c"placeholder", &spec.placeholder);

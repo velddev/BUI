@@ -336,3 +336,71 @@ fn backspace_resets_to_the_value_the_field_was_made_with() {
         assert!((back - 5.0).abs() < 1e-9, "Backspace should give 5, got {back}");
     });
 }
+
+struct TextBoxes;
+
+impl Render for TextBoxes {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().styled()
+            .child(textarea().id("plain").attr("rows", "2"))
+            .child(textarea().id("big").attr("rows", "2").style("font-size: 22px"))
+            .child(input().id("field"))
+            .child(input().id("big-field").style("font-size: 22px"))
+            .child(textarea().id("jump").attr("bui-edge-jump", "").value("one\ntwo\nthree"))
+            .child(textarea().id("stay").value("one\ntwo"))
+    }
+}
+
+#[test]
+fn text_boxes_take_css_font_size() {
+    Application::headless().run(|cx| {
+        let win = open(cx, 400.0, 600.0, TextBoxes);
+        let id = win.id;
+        cx.draw(id);
+        let h = |cx: &mut App, el: &str| cx.element_bounds(id, el).unwrap().size.height;
+        // twice the kit's 11px: twice as tall (the styled sheet's default is the kit's size)
+        assert_eq!(h(cx, "big"), 2.0 * h(cx, "plain"));
+        assert_eq!(h(cx, "big-field"), 2.0 * h(cx, "field"));
+    });
+}
+
+#[test]
+fn textarea_caret_and_edge_jump() {
+    Application::headless().run(|cx| {
+        let win = open(cx, 400.0, 600.0, TextBoxes);
+        let id = win.id;
+        cx.draw(id);
+        let caret = |cx: &mut App, el: &str| win.update(cx, |_, w, _| w.textarea_caret(el)).unwrap();
+        let set = |cx: &mut App, el: &str, to: TextCaret| assert!(win.update(cx, |_, w, _| w.set_textarea_caret(el, to)).unwrap());
+        let focus = |cx: &mut App, el: &str| {
+            let b = cx.element_bounds(id, el).unwrap();
+            cx.simulate_click(id, b.origin.x + 4.0, b.origin.y + 4.0);
+        };
+        assert_eq!(caret(cx, "field"), None, "only textareas");
+        focus(cx, "jump");
+        // "one\ntwo\nthree": Up on the first line goes to the start, Shift selects
+        set(cx, "jump", TextCaret::at(2));
+        assert_eq!(caret(cx, "jump"), Some(TextCaret::at(2)));
+        cx.simulate_key_with(id, "", "Up", false, true);
+        assert_eq!(caret(cx, "jump"), Some(TextCaret { anchor: 2, caret: 0 }));
+        cx.simulate_key(id, "", "Up");
+        assert_eq!(caret(cx, "jump"), Some(TextCaret::at(0)));
+        // other lines move as before: "two" column 1 to "one" column 1
+        set(cx, "jump", TextCaret::at(5));
+        cx.simulate_key(id, "", "Up");
+        assert_eq!(caret(cx, "jump"), Some(TextCaret::at(1)));
+        // Down on the last line goes to the end
+        set(cx, "jump", TextCaret { anchor: 0, caret: 9 });
+        assert_eq!(caret(cx, "jump"), Some(TextCaret { anchor: 0, caret: 9 }));
+        cx.simulate_key(id, "", "Down");
+        assert_eq!(caret(cx, "jump"), Some(TextCaret::at(13)));
+        // offsets are clamped to the text
+        set(cx, "jump", TextCaret::at(99));
+        assert_eq!(caret(cx, "jump"), Some(TextCaret::at(13)));
+        // without the attribute Up on the first line keeps the column
+        focus(cx, "stay");
+        set(cx, "stay", TextCaret::at(2));
+        cx.simulate_key(id, "", "Up");
+        assert_eq!(caret(cx, "stay"), Some(TextCaret::at(2)));
+    });
+}

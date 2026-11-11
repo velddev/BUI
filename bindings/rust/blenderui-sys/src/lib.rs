@@ -313,6 +313,14 @@ unsafe extern "C" {
     pub fn BK_get_str(node: *mut BKNode, key: *const c_char) -> *const c_char;
     pub fn BK_get_color(node: *mut BKNode, key: *const c_char, r_rgba: *mut c_float) -> c_int;
 
+    // textarea: byte offsets into its text
+    pub fn BK_textarea_caret(node: *mut BKNode) -> c_int;
+    /// The selection as (start, end), start < end; 0 without one.
+    pub fn BK_textarea_selection(node: *mut BKNode, r_start: *mut c_int, r_end: *mut c_int) -> c_int;
+    /// Select from `anchor` to the caret at `caret` (`anchor` < 0: no selection).
+    pub fn BK_textarea_set_selection(node: *mut BKNode, anchor: c_int, caret: c_int);
+    pub fn BK_textarea_see(node: *mut BKNode, offset: c_int);
+
     // geometry managers
     pub fn BK_geom_set_manager(child: *mut BKNode, manager: c_int);
     pub fn BK_geom_set(child: *mut BKNode, key: *const c_char, value: c_double);

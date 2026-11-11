@@ -28,7 +28,7 @@ use crate::prof::{span, Phase};
 use crate::style::ContentPart;
 use crate::style::{apply, Computed, DisplayKind, Fnv, FnvMap, TextAlign, TextTransform, VAlign, WhiteSpace};
 use crate::text::{self, TextCache};
-use crate::widgets::WidgetSpec;
+use crate::widgets::{WKind, WidgetSpec};
 
 // ==========================================================================
 // Keys
@@ -1196,6 +1196,11 @@ impl<'a> Builder<'a> {
                     // browser-look controls in plain HTML; Blender widgets inside
                     // `styled` and for the Blender components (`bui-blender`)
                     spec.html = !self.nodes[i].styled && self.attr(i, "bui-blender").is_none();
+                    // a Blender text box draws CSS `font-size` (the styled sheet's 11px
+                    // is the kit's own size)
+                    if self.nodes[i].styled && matches!(spec.kind, WKind::Text { .. } | WKind::TextArea) {
+                        spec.font_scale = self.styles[style].font_size / 11.0;
+                    }
                     self.nodes[i].content = Content::Widget(spec);
                 } else {
                     self.children(i, div.children);

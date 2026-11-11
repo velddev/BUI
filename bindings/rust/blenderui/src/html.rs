@@ -193,6 +193,7 @@ dialog:not([open]) { display: none; }
 figcaption { font-size: 0.9em; color: #b8b8b8; }
 img, video, iframe, embed, object, audio, canvas, svg, math { display: inline-block; }
 button, input, select, textarea, progress, meter { display: inline-block; }
+input, textarea { font-size: 11px; }
 audio:not([controls]) { display: none; }
 iframe, embed, object, video { border: 1px solid #484848; }
 label { cursor: default; }

@@ -2362,6 +2362,17 @@ static void text_finish(BKNode *n, bool confirm)
   }
 }
 
+/* Events measure text at the size it is drawn with (the node's "font_scale"). */
+static float text_font_begin(const BKNode *n)
+{
+  if (BK_HTML(n)) {
+    return html_font_begin(n);
+  }
+  const float saved = bk_text_scale;
+  bk_text_scale = n->font_scale > 0.0f ? n->font_scale : 1.0f;
+  return saved;
+}
+
 static float text_x(BKNode *n, BKEvent *e)
 {
   if (BK_HTML(n)) { /* Chrome: 2px border + 2px padding before the text */
@@ -2372,7 +2383,7 @@ static float text_x(BKNode *n, BKEvent *e)
 
 static int text_press(BKNode *n, BKEvent *e)
 {
-  const float saved = BK_HTML(n) ? html_font_begin(n) : bk_text_scale;
+  const float saved = text_font_begin(n);
   if (!n->edit) {
     bk_begin_edit(n, n->text ? n->text : "", false);
   }
@@ -2387,7 +2398,7 @@ static int text_dbl(BKNode *n, BKEvent *e)
   if (!n->edit) {
     return text_press(n, e);
   }
-  const float saved = BK_HTML(n) ? html_font_begin(n) : bk_text_scale;
+  const float saved = text_font_begin(n);
   bk_te_select_word(n->edit, bk_te_index_at(n->edit, text_x(n, e)));
   bk_text_scale = saved;
   bk_invalidate(n);
@@ -2397,7 +2408,7 @@ static int text_dbl(BKNode *n, BKEvent *e)
 static int text_drag(BKNode *n, BKEvent *e)
 {
   if (n->edit) {
-    const float saved = BK_HTML(n) ? html_font_begin(n) : bk_text_scale;
+    const float saved = text_font_begin(n);
     bk_te_drag(n->edit, text_x(n, e));
     bk_text_scale = saved;
     bk_invalidate(n);

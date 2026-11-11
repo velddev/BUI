@@ -20,6 +20,7 @@ use crate::layout::{id_key, layout, Content, Frame, Key, LayoutCaches, UiState};
 use crate::prof::{self, span, Phase};
 use crate::paint::{paint_frame, Painter};
 use crate::widgets::{WKind, Widgets};
+pub use crate::widgets::TextCaret;
 use blenderui_sys as sys;
 
 // ==========================================================================
@@ -1059,6 +1060,46 @@ impl Window {
         self.state.focus_path = [key].into_iter().collect();
         self.state.focused_id = Some(id.to_owned());
         self.dirty = true;
+    }
+
+    /// The caret and selection of the `<textarea>` with `.id(id)`, as of
+    /// now (key events reach `on_key_down` after the textarea handled them).
+    pub fn textarea_caret(&self, id: &str) -> Option<TextCaret> {
+        let n = self.widgets.textarea(id_key(id))?;
+        let (mut a, mut b) = (0, 0);
+        // SAFETY: a live textarea node of this window; out pointers valid for the call.
+        unsafe {
+            let caret = sys::BK_textarea_caret(n);
+            let anchor = match sys::BK_textarea_selection(n, &mut a, &mut b) {
+                0 => caret,
+                _ if a == caret => b,
+                _ => a,
+            };
+            Some(TextCaret { anchor: anchor as usize, caret: caret as usize })
+        }
+    }
+
+    /// Move the caret of the `<textarea>` with `.id(id)` and select from
+    /// `to.anchor` (or nothing), scrolling the caret into view. Offsets are
+    /// clamped to the text and moved back to a character boundary; Up and
+    /// Down go on from the new column. False when there is no such textarea.
+    pub fn set_textarea_caret(&mut self, id: &str, to: TextCaret) -> bool {
+        let Some(n) = self.widgets.textarea(id_key(id)) else { return false };
+        // SAFETY: a live textarea node; the text is read before the kit changes anything.
+        unsafe {
+            let text = CStr::from_ptr(sys::BK_get_str(n, c"value".as_ptr())).to_bytes();
+            let fit = |mut at: usize| {
+                at = at.min(text.len());
+                while at > 0 && at < text.len() && (text[at] & 0xc0) == 0x80 {
+                    at -= 1;
+                }
+                at as c_int
+            };
+            let (anchor, caret) = (fit(to.anchor), fit(to.caret));
+            sys::BK_textarea_set_selection(n, if anchor == caret { -1 } else { anchor }, caret);
+            sys::BK_textarea_see(n, caret);
+        }
+        true
     }
 
     /// Is the element with `.id(id)` hovered?
