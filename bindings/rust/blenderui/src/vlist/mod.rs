@@ -27,7 +27,7 @@ mod element;
 mod state;
 
 pub use blenderui_vlist::{
-    Align, Budget, ChatList, ChatStyle, CountSource, Hit, ItemPainter, ItemSource, List, ListView, Measurer, Message, Nav, Options, Record,
+    Align, Budget, ChatList, ChatStyle, CountSource, Font, FontWidth, Hit, ItemPainter, ItemSource, List, ListView, Measurer, Message, Nav, Options, Record,
     RowList, RowStyle, VecSource,
 };
 pub use blenderui_vlist::synth;

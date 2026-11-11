@@ -35,13 +35,13 @@ pub mod synth;
 pub mod view;
 pub mod wrap;
 
-pub use blenderui_paint::{PaintSink, Palette, Point, Rect, Rgba, TextCache};
+pub use blenderui_paint::{Font, PaintSink, Palette, Point, Rect, Rgba, TextCache};
 pub use chat::{ChatList, ChatStyle};
 pub use list::{Hit, List};
 pub use estimate::Estimator;
 pub use fx::Fx;
 pub use index::{HeightIndex, IndexError};
-pub use measure::{Measurer, TextLayout, TextWidth};
+pub use measure::{FontWidth, Measurer, TextLayout, TextWidth};
 pub use paint::ItemPainter;
 pub use rows::{CountSource, RowList, RowStyle};
 pub use source::{ItemSource, Message, Page, Record, VecSource};

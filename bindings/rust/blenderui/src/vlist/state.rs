@@ -70,10 +70,10 @@ impl<S: ItemSource, P: Measurer + ItemPainter> ListState<S, P> {
         let now = Instant::now();
         let dt = self.last_frame.replace(now).map_or(1.0 / 60.0, |t| now.duration_since(t).as_secs_f64().min(0.1));
         let mut more = self.list.view.tick(dt);
-        let mut tw = |s: &str, z: f32| measure(s, z, scale);
-        self.list.layout(&mut tw);
+        let mut tw = |s: &str, z: f32, f| measure(s, z, f, scale);
+        self.list.layout_fonts(&mut tw);
         if !self.list.view.flinging() {
-            more |= self.list.prefetch(&mut tw, Budget::Time(std::time::Duration::from_micros(800)));
+            more |= self.list.prefetch_fonts(&mut tw, Budget::Time(std::time::Duration::from_micros(800)));
         }
         if more {
             window.request_animation_frame();

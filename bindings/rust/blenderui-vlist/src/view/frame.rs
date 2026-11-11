@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 
 use super::{ListView, Pos};
 use crate::fx::units_to_px;
-use crate::measure::{Measurer, TextWidth};
+use crate::measure::{FontWidth, Measurer, TextWidth};
 use crate::source::{ItemSource, FLAG_PLACEHOLDER};
 
 /// How much measuring a frame may do.
@@ -122,7 +122,7 @@ impl ListView {
 
     /// Measure the placed items that are not exact, within `clock`. Returns
     /// whether a height was written (the placement must be redone).
-    fn measure_placed<S: ItemSource, M: Measurer>(&mut self, src: &S, m: &M, tw: TextWidth<'_>, clock: &mut Clock) -> bool {
+    fn measure_placed<S: ItemSource, M: Measurer>(&mut self, src: &S, m: &M, tw: FontWidth<'_>, clock: &mut Clock) -> bool {
         let (Some(a), Some(b)) = (self.placed.first(), self.placed.last()) else { return false };
         let range = a.item..b.item + 1;
         self.ensure_page(src, &range);
@@ -140,7 +140,7 @@ impl ListView {
             if rec.flags & FLAG_PLACEHOLDER != 0 {
                 continue;
             }
-            let h = self.text.height(&rec, m, self.width, tw);
+            let h = self.text.height_fonts(&rec, m, self.width, tw);
             self.updates.push((p.item, h));
             self.samples.push((rec.text.len() as u64, h.px()));
             clock.done += 1;
@@ -163,6 +163,12 @@ impl ListView {
     /// Lay out the frame and return the items to paint (viewport-relative).
     /// `tw` measures text widths (the host's shaper).
     pub fn layout<S: ItemSource, M: Measurer>(&mut self, src: &S, m: &M, tw: TextWidth<'_>) -> &[Placed] {
+        self.layout_fonts(src, m, &mut |s, size, _| tw(s, size))
+    }
+
+    /// [`ListView::layout`] measuring each face of the text in its font
+    /// ([`Measurer::fonts`]).
+    pub fn layout_fonts<S: ItemSource, M: Measurer>(&mut self, src: &S, m: &M, tw: FontWidth<'_>) -> &[Placed] {
         self.text.next_generation();
         self.text.ensure_capacity(self.placed.len() * 4);
         if src.len() != self.index.len() {
@@ -202,7 +208,7 @@ impl ListView {
         // cache the wrapped lines of what is shown: painting is read-only and only looks them up
         for p in &self.placed {
             if let Some(rec) = self.page.record(p.item).filter(|r| p.exact && r.flags & FLAG_PLACEHOLDER == 0) {
-                self.text.lines(&rec, m, self.width, tw);
+                self.text.lines_fonts(&rec, m, self.width, tw);
             }
         }
         self.fling *= 0.7;
@@ -249,6 +255,11 @@ impl ListView {
     /// direction, so a flick finds them measured. Returns whether more
     /// remains (ask for another frame while true).
     pub fn prefetch<S: ItemSource, M: Measurer>(&mut self, src: &S, m: &M, tw: TextWidth<'_>, budget: Budget) -> bool {
+        self.prefetch_fonts(src, m, &mut |s, size, _| tw(s, size), budget)
+    }
+
+    /// [`ListView::prefetch`] measuring each face of the text in its font.
+    pub fn prefetch_fonts<S: ItemSource, M: Measurer>(&mut self, src: &S, m: &M, tw: FontWidth<'_>, budget: Budget) -> bool {
         let (Some(a), Some(b)) = (self.placed.first(), self.placed.last()) else { return false };
         let n = (self.placed.len() * 3).max(48);
         let (first, last) = (a.item, b.item);
@@ -283,7 +294,7 @@ impl ListView {
             if rec.flags & FLAG_PLACEHOLDER != 0 {
                 continue;
             }
-            let h = self.text.height(&rec, m, self.width, tw);
+            let h = self.text.height_fonts(&rec, m, self.width, tw);
             self.updates.push((i, h));
             self.samples.push((rec.text.len() as u64, h.px()));
             clock.done += 1;

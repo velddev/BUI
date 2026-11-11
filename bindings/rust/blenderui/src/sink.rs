@@ -9,6 +9,7 @@ use std::cell::Cell as StdCell;
 
 use blenderui_sys as sys;
 use blenderui_table::{PaintSink, Palette, Rect, Rgba as CoreRgba, TextCache};
+use blenderui_vlist::Font;
 
 use crate::color::Rgba;
 use crate::geometry::{Bounds, Point, Size};
@@ -45,10 +46,20 @@ thread_local! {
     static WIDTHS: StdCell<Option<Widths>> = const { StdCell::new(None) };
 }
 
-/// Width of `s` at `size` logical px, measured by the text engine at the
-/// device size it is drawn at.
-pub(crate) fn measure(s: &str, size: f32, scale: f32) -> f32 {
-    let (fam, low) = crate::text::family(0);
+/// The engine's font flags for a face: the UI font's weight and slant, or
+/// the family CSS `monospace` resolves to.
+fn font_flags(font: Font) -> i32 {
+    static MONO: std::sync::OnceLock<i32> = std::sync::OnceLock::new();
+    match font {
+        Font::Mono => *MONO.get_or_init(|| i32::from(crate::text::font_id("monospace")) << crate::text::FAMILY_SHIFT),
+        f => (if f.bold() { sys::BUI_FONT_BOLD } else { 0 }) | (if f.italic() { sys::BUI_FONT_ITALIC } else { 0 }),
+    }
+}
+
+/// Width of `s` at `size` logical px in `font`, measured by the text engine
+/// at the device size it is drawn at.
+pub(crate) fn measure(s: &str, size: f32, font: Font, scale: f32) -> f32 {
+    let (fam, low) = crate::text::family(font_flags(font));
     let mut w = 0.0f32;
     // SAFETY: pointers valid for the call; `family` returns static strings.
     let ok = unsafe { sys::BUI_text_measure(fam, low, size * scale, s.as_ptr().cast(), s.len() as i32, &mut w) };
@@ -94,11 +105,19 @@ impl PaintSink for PainterSink<'_> {
         self.p.line(&[(a.0 + o.x, a.1 + o.y), (b.0 + o.x, b.1 + o.y)], color(c), width);
     }
     fn text(&mut self, x: f32, cy: f32, text: &str, size: f32, c: CoreRgba) {
-        self.p.text(self.origin.x + x, text_top(self.origin.y + cy, size), text, size, color(c));
+        self.text_font(x, cy, text, size, Font::Regular, c);
     }
     fn text_width(&mut self, text: &str, size: f32) -> f32 {
+        self.text_width_font(text, size, Font::Regular)
+    }
+    fn text_font(&mut self, x: f32, cy: f32, text: &str, size: f32, font: Font, c: CoreRgba) {
+        let top = text_top(self.origin.y + cy, size);
+        self.p.styled_text(self.origin.x + x, top, text, size, font_flags(font), color(c));
+    }
+    fn text_width_font(&mut self, text: &str, size: f32, font: Font) -> f32 {
         let scale = self.scale;
-        *self.widths.get_or_insert_with(text, 0, size, || measure(text, size, scale))
+        // the cache's font slot: the face
+        *self.widths.get_or_insert_with(text, font.index() as u32, size, || measure(text, size, font, scale))
     }
     fn image(&mut self, r: Rect, src: &str) {
         self.p.image_file_cover(bounds(r, self.origin), src);
@@ -107,5 +126,26 @@ impl PaintSink for PainterSink<'_> {
         let (origin, scale) = (self.origin, self.scale);
         let widths = &mut *self.widths;
         self.p.with_clip(bounds(r, origin), |p| f(&mut PainterSink { p, origin, scale, widths }));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn faces_measure_as_drawn() {
+        let w = |font| measure("mmmm iiii", 13.0, font, 1.0);
+        // bold is wider; monospace gives "i" a whole cell
+        assert!(w(Font::Bold) > w(Font::Regular), "{} {}", w(Font::Bold), w(Font::Regular));
+        assert!(w(Font::Mono) > w(Font::Regular));
+        assert_eq!(measure("iiii", 13.0, Font::Mono, 1.0), measure("mmmm", 13.0, Font::Mono, 1.0));
+        // the sink's widths are per face
+        let mut p = Painter::default();
+        with_sink(&mut p, Point { x: 0.0, y: 0.0 }, 1.0, |s| {
+            assert_eq!(s.text_width("mmmm iiii", 13.0), w(Font::Regular));
+            assert_eq!(s.text_width_font("mmmm iiii", 13.0, Font::Mono), w(Font::Mono));
+            s.text_font(0.0, 10.0, "mmmm", 13.0, Font::Bold, CoreRgba::new(1.0, 1.0, 1.0, 1.0));
+        });
     }
 }

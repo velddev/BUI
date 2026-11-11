@@ -1,5 +1,6 @@
 //! The one trait a framework implements to be painted into.
 
+use crate::font::Font;
 use crate::geom::{Rect, Rgba};
 
 /// Where a view paints. Coordinates are logical pixels relative to the
@@ -18,6 +19,17 @@ pub trait PaintSink {
     fn text(&mut self, x: f32, cy: f32, text: &str, size: f32, c: Rgba);
     /// The width of `text` at `size`.
     fn text_width(&mut self, text: &str, size: f32) -> f32;
+    /// [`PaintSink::text`] in `font`. The default draws it regular, for
+    /// frameworks with one face.
+    fn text_font(&mut self, x: f32, cy: f32, text: &str, size: f32, font: Font, c: Rgba) {
+        let _ = font;
+        self.text(x, cy, text, size, c);
+    }
+    /// [`PaintSink::text_width`] in `font` (what [`PaintSink::text_font`] draws).
+    fn text_width_font(&mut self, text: &str, size: f32, font: Font) -> f32 {
+        let _ = font;
+        self.text_width(text, size)
+    }
     /// Run `f` with drawing restricted to `r` (intersected with any clip in
     /// force). It receives the sink to draw into, which may be a different
     /// object than `self` (a framework scopes its clip with a closure).

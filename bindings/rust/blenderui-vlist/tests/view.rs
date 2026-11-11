@@ -4,10 +4,10 @@
 #![allow(clippy::float_cmp)]
 
 use blenderui_paint::testing::{count_allocs, Counting};
-use blenderui_paint::{PaintSink, Palette, Rect, Rgba};
-use blenderui_vlist::source::{ItemSource, Page};
+use blenderui_paint::{Font, PaintSink, Palette, Rect, Rgba};
+use blenderui_vlist::source::{ItemSource, Message, Page, Record, VecSource};
 use blenderui_vlist::synth;
-use blenderui_vlist::{Align, Budget, ChatList, ChatStyle, ListView, Options, Pos};
+use blenderui_vlist::{Align, Budget, ChatList, ChatStyle, Estimator, ItemPainter, Lines, List, ListView, Measurer, Options, Pos};
 
 #[global_allocator]
 static A: Counting = Counting;
@@ -392,4 +392,62 @@ fn tanstack_virtual_options_and_offsets() {
     let small = chat(5000, Options { estimate_size: Some(24.0), ..Options::default() });
     let big = chat(5000, Options { estimate_size: Some(96.0), ..Options::default() });
     assert!(big.view.scroll_extent().1 > small.view.scroll_extent().1 * 2.0);
+}
+
+/// Rows of 10 px text wrapped at 100 px; sender 1 is code (monospace).
+/// Painting notes each row's line count (`None`: a skeleton).
+struct Faces(Palette, std::cell::RefCell<Vec<Option<usize>>>);
+
+impl Measurer for Faces {
+    fn font_size(&self) -> f32 {
+        10.0
+    }
+    fn line_height(&self) -> f32 {
+        12.0
+    }
+    fn wrap_width(&self, _: &Record<'_>, _: f32) -> f32 {
+        100.0
+    }
+    fn chrome(&self, _: &Record<'_>) -> f32 {
+        0.0
+    }
+    fn estimator(&self, list_width: f32) -> Estimator {
+        Estimator::new(0.0, 12.0, 5.0, f64::from(list_width))
+    }
+    fn fonts(&self, rec: &Record<'_>, face: &mut dyn FnMut(usize, Font)) {
+        if rec.sender == 1 {
+            face(0, Font::Mono);
+        }
+    }
+}
+
+impl ItemPainter for Faces {
+    fn palette(&self) -> &Palette {
+        &self.0
+    }
+    fn item(&self, _: &mut dyn PaintSink, _: Rect, _: &Record<'_>, lines: &Lines) {
+        self.1.borrow_mut().push(Some(lines.count()));
+    }
+    fn skeleton(&self, _: &mut dyn PaintSink, _: Rect, _: Option<&Record<'_>>) {
+        self.1.borrow_mut().push(None);
+    }
+}
+
+#[test]
+fn faces_are_measured_in_their_font() {
+    // 30 chars: 150 px regular (2 lines), 300 px in the twice as wide monospace (3 lines)
+    let text = "aaaa bbbb cccc dddd eeee ffff ".to_owned();
+    let msgs = (0..2).map(|k| Message { id: k, time: 0, sender: k as u16, flags: 0, media_h: 0, text: text.clone(), media: String::new() });
+    let list = || List::new(VecSource::from_messages(msgs.clone().collect()), Faces(Palette::blender_dark(), Default::default()), 600.0, 400.0, Options::default()).unwrap();
+    let mut l = list();
+    let mut fw = |s: &str, size: f32, f: Font| tw(s, size) * if f == Font::Mono { 2.0 } else { 1.0 };
+    let placed = l.layout_fonts(&mut fw).to_vec();
+    assert_eq!((placed[0].h, placed[1].h), (24.0, 36.0));
+    // painting finds the lines wrapped in their faces
+    l.paint(&mut Null::default());
+    assert_eq!(*l.style.1.borrow(), [Some(2), Some(3)]);
+    // the old call measures everything regular
+    let mut l = list();
+    let placed = l.layout(&mut tw).to_vec();
+    assert_eq!((placed[0].h, placed[1].h), (24.0, 24.0));
 }

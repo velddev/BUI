@@ -5,7 +5,7 @@
 
 use blenderui_paint::PaintSink;
 
-use crate::measure::{Measurer, TextWidth};
+use crate::measure::{FontWidth, Measurer, TextWidth};
 use crate::paint::ItemPainter;
 use crate::scrollbar::{Thumb, WIDTH as SCROLL_W};
 use crate::source::ItemSource;
@@ -64,6 +64,12 @@ impl<S: ItemSource, P: Measurer + ItemPainter> List<S, P> {
         self.view.layout(&self.source, &self.style, tw)
     }
 
+    /// Lay out the frame measuring each face in its font (`tw`: the host's
+    /// text width in a face).
+    pub fn layout_fonts(&mut self, tw: FontWidth<'_>) -> &[Placed] {
+        self.view.layout_fonts(&self.source, &self.style, tw)
+    }
+
     /// Paint the laid-out frame.
     pub fn paint(&self, sink: &mut dyn PaintSink) {
         self.view.paint(&self.style, sink);
@@ -83,6 +89,11 @@ impl<S: ItemSource, P: Measurer + ItemPainter> List<S, P> {
     /// Idle measuring ahead of the scroll direction; true while more remains.
     pub fn prefetch(&mut self, tw: TextWidth<'_>, budget: Budget) -> bool {
         self.view.prefetch(&self.source, &self.style, tw, budget)
+    }
+
+    /// [`List::prefetch`] measuring each face in its font.
+    pub fn prefetch_fonts(&mut self, tw: FontWidth<'_>, budget: Budget) -> bool {
+        self.view.prefetch_fonts(&self.source, &self.style, tw, budget)
     }
 
     /// The scrollbar thumb, if the content is taller than the viewport.
