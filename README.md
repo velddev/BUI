@@ -1195,9 +1195,11 @@ Blender's:
 - **Windows' GDI text** is opt-in (`-DBUI_TEXT_GDI=ON`, Rust feature
   `gdi-text`): ClearType-style hinting and system fonts, without Slug.
 
-Limits worth knowing: no per-glyph font fallback yet (missing characters show
-as boxes), IME on Windows only (X11 and macOS are coming), right-to-left text is
-reordered but not shaped, no OpenType features. Font fallback is coming soon. More:
+Limits worth knowing: the only per-glyph fallback is the emoji face (register
+one as `"emoji"`, else Segoe UI Emoji, Twemoji, Noto Emoji or OpenMoji from the
+font folders; colour through COLR v0), other missing characters show as boxes,
+IME on Windows only (X11 and macOS are coming), right-to-left text is reordered
+but not shaped, no OpenType features. More:
 [Text and fonts](https://bui.preetham.top/docs/concepts/text-and-fonts/).
 
 ## 22. Themes: dark and light

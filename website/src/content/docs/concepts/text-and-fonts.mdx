@@ -97,20 +97,30 @@ In tkinter syntax, `font=("Arial", 18, "bold")` sets a widget's family, size and
 </Tab>
 </LangTabs>
 
+### Emoji and other missing characters
+
+A character the element's face lacks is drawn from the **emoji face**: the font registered as the family `"emoji"`, else the first of Segoe UI Emoji (`seguiemj.ttf`), Twemoji, Noto Emoji or OpenMoji found in the font folders. `U+FE0F` after a character asks for its emoji presentation (`❤️` comes from the emoji face even though Inter has `❤`). Colour fonts with COLR v0 layers (Segoe UI Emoji) draw in colour, on the CPU and on the GPU; monochrome emoji fonts draw in the text colour. The emoji face is measured and laid out at the element's size, and sits on its baseline.
+
+```rust
+blenderui::add_font("emoji", false, false, include_bytes!("seguiemj.ttf"));
+```
+
+Bitmap-only emoji fonts (Noto Color Emoji's CBDT, Apple Color Emoji's sbix) can't load, and emoji sequences aren't composed: a ZWJ sequence, a flag or a skin-tone modifier draws as its component emoji, and joiners and variation selectors take no space.
+
 ## Windows' GDI text (optional)
 
 On Windows, you can build BUI with Windows' own GDI text engine and system fonts instead: CMake `-DBUI_TEXT_GDI=ON`, or the `gdi-text` feature in Rust. Text then uses ClearType-style hinting and Windows' fonts, and the GPU renderer can't use Slug. Most apps should keep the default, which looks like Blender everywhere.
 
 ## Limits worth knowing
 
-- **No per-glyph font fallback.** Characters that Inter (or the chosen face) doesn't have show as boxes. A family list in CSS picks one face per element; it doesn't mix faces within a line.
+- **One fallback face.** Characters that Inter (or the chosen face) doesn't have come from the emoji face only (see above); other scripts the face lacks show as boxes. A family list in CSS picks one face per element; it doesn't mix faces within a line.
 - **IME works on Windows only.** Input methods for Chinese, Japanese and Korean work in text fields and text areas on Windows, ported from Blender's GHOST (the candidate window follows the caret, the composition is drawn underlined at the caret). X11 and macOS aren't supported yet, and number fields and password fields take no IME, as in Blender.
 - **Right-to-left text** is reordered (bidi) but not shaped, so Arabic letters don't join.
 - **No OpenType features** (`font-feature-settings` and friends): the text engine doesn't shape, and Blender's doesn't either.
 - **Rust only:** text doesn't wrap around floats, and `text-align: justify` aligns left.
 
-<ComingSoon feature="Per-glyph font fallback and IME on X11 and macOS">
-Both are next on the list of things to port from Blender's source: BLF's fallback fonts, so missing characters find a face that has them, and input methods for the X11 and Cocoa windows (they use the same kit API as Windows).
+<ComingSoon feature="Fallback fonts per script and IME on X11 and macOS">
+Both are next on the list of things to port from Blender's source: BLF's fallback fonts per script, so missing characters of any script find a face that has them, and input methods for the X11 and Cocoa windows (they use the same kit API as Windows).
 </ComingSoon>
 
 ## Troubleshooting
@@ -118,7 +128,8 @@ Both are next on the list of things to port from Blender's source: BLF's fallbac
 | Symptom | Fix |
 | --- | --- |
 | Monospace or serif text uses the UI font | Install a TrueType family such as DejaVu, Liberation or Noto, or set `BUI_FONT_DIR` to a folder that has one. Inter itself is always there. |
-| Boxes instead of characters | The face has no glyph for them, and there's no fallback yet. Use a face that covers your script with `BUI_FONT`, or register one. |
+| Boxes instead of characters | The face has no glyph for them, and only emoji fall back to another face. Use a face that covers your script with `BUI_FONT`, or register one. |
+| Emoji as boxes, or black and white | No emoji font was found, or it has no colour layers: register one as `"emoji"` (Segoe UI Emoji is the colour one that loads). |
 | GPU text looks different from CPU text | Try `BUI_SLUG=0` to draw GPU text from the same glyph bitmaps the CPU uses. |
 
 ## Next steps

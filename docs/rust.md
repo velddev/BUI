@@ -708,7 +708,10 @@ The `gdi-text` feature uses Windows' GDI engine and system fonts.
   text is reordered (bidi) but not shaped (no Arabic joining).
 - **Fonts**: `font-family` picks a face per element (registered, `@font-face`,
   installed or generic `monospace` / `serif`); there is no per-glyph fallback
-  between faces of a list.
+  between faces of a list. Characters the face lacks come from the emoji face
+  only (register one as `add_font("emoji", ...)`, else Segoe UI Emoji, Twemoji,
+  Noto Emoji or OpenMoji from the font folders; COLR v0 fonts draw in colour).
+  Emoji sequences (ZWJ, flags, skin tones) draw as their components.
 - **Effects and animation**: see "Not done yet" under [Coverage](#coverage).
 - **Transforms**: every 2D transform draws, but hit testing uses the
   untransformed box; 3D transforms have no effect.
