@@ -370,7 +370,8 @@ typedef struct BKImageDraw {
  * false when there is nothing to draw (yet: a source still decoding). */
 bool bk_image_ref_resolve(const BKImageRef *ref, int fit, int frame, const float box[4],
                           BKImageDraw *r);
-void bk_image_draw_resolved(BuiRaster *r, const BKImageDraw *d, float alpha);
+/* `radius`: the drawn image's corners rounded (0: square) */
+void bk_image_draw_resolved(BuiRaster *r, const BKImageDraw *d, float alpha, float radius);
 /* resolve + draw into the frame being rendered */
 void bk_image_ref_draw(const BKImageRef *ref, int fit, int frame, const float box[4], float alpha);
 void bk_imbuf_draw(const BKImBuf *ib, float x, float y, float w, float h, float alpha);

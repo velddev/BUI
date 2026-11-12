@@ -43,4 +43,10 @@ pub trait PaintSink {
         let _ = src;
         self.round(r, 4.0, Rgba::new(0.5, 0.5, 0.5, 0.25));
     }
+    /// [`PaintSink::image`] with the image's corners rounded by `radius`.
+    /// The default draws it square.
+    fn image_round(&mut self, r: Rect, radius: f32, src: &str) {
+        let _ = radius;
+        self.image(r, src);
+    }
 }

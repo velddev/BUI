@@ -1237,7 +1237,7 @@ static void canvas_item_draw(BuiRaster *r, const CItem *ci, float ox, float oy, 
     case BK_ITEM_IMAGE: {
       BKImageDraw d;
       if (prep ? prep->image.ib != NULL : citem_image_resolve(ci, ox, oy, &d)) {
-        bk_image_draw_resolved(r, prep ? &prep->image : &d, 1.0f);
+        bk_image_draw_resolved(r, prep ? &prep->image : &d, 1.0f, it->radius);
       }
       break;
     }

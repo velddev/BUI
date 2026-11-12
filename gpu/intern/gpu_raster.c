@@ -1429,6 +1429,46 @@ void BUI_raster_image(BuiRaster *r,
                       float alpha,
                       int flags)
 {
+  BUI_raster_image_round(r, x, y, w, h, img, src, alpha, flags, 0.0f);
+}
+
+/* Rounded corners of an image drawn into x, y, w, h: the coverage of pixel
+ * (px, py) as a fraction of 256 (256 away from the corners). */
+typedef struct ImageCorners {
+  float x, y, w, h, rad;
+} ImageCorners;
+
+static inline uint32_t corner_cov(const ImageCorners *k, int px, int py)
+{
+  const float fx = (float)px + 0.5f, fy = (float)py + 0.5f;
+  const float dx = fx < k->x + k->rad ? k->x + k->rad - fx :
+                   fx > k->x + k->w - k->rad ? fx - (k->x + k->w - k->rad) : 0.0f;
+  const float dy = fy < k->y + k->rad ? k->y + k->rad - fy :
+                   fy > k->y + k->h - k->rad ? fy - (k->y + k->h - k->rad) : 0.0f;
+  if (dx <= 0.0f || dy <= 0.0f) {
+    return 256u;
+  }
+  const float cov = clampf(k->rad - sqrtf(dx * dx + dy * dy) + 0.5f, 0.0f, 1.0f);
+  return (uint32_t)(cov * 256.0f + 0.5f);
+}
+
+/* ga scaled by a corner's coverage at (px, py) (ga as is with no corners). */
+static inline uint32_t corner_ga(const ImageCorners *k, int px, int py, uint32_t ga)
+{
+  return k ? (ga * corner_cov(k, px, py) + 128u) >> 8 : ga;
+}
+
+void BUI_raster_image_round(BuiRaster *r,
+                            float x,
+                            float y,
+                            float w,
+                            float h,
+                            const BuiPixmap *img,
+                            const float src[4],
+                            float alpha,
+                            int flags,
+                            float radius)
+{
   int x0, y0, x1, y1;
   if (!img || !img->px || img->w <= 0 || img->h <= 0 || !(alpha > 0.0f) ||
       !clip_box(r, x, y, x + w, y + h, &x0, &y0, &x1, &y1))
@@ -1478,6 +1518,8 @@ void BUI_raster_image(BuiRaster *r,
   }
   const uint32_t ga = (uint32_t)(alpha * 256.0f + 0.5f);
   const float kx = sw / w, ky = sh / h;
+  const ImageCorners corners = {x, y, w, h, fminf(radius, 0.5f * fminf(w, h))};
+  const ImageCorners *k = corners.rad > 0.25f ? &corners : NULL;
   /* 1:1 on whole pixels: a copy with blending */
   if (fabsf(kx - 1.0f) < 1e-4f && fabsf(ky - 1.0f) < 1e-4f && x == floorf(x) && y == floorf(y) &&
       sx == floorf(sx) && sy == floorf(sy))
@@ -1486,7 +1528,7 @@ void BUI_raster_image(BuiRaster *r,
       uint32_t *row = r->pix + (size_t)py * r->w;
       const uint32_t *s = img->px + (size_t)(py - (int)y + (int)sy) * img->w + (int)sx - (int)x;
       for (int px = x0; px < x1; px++) {
-        put_image_px(row + px, s[px], ga);
+        put_image_px(row + px, s[px], corner_ga(k, px, py, ga));
       }
     }
     return;
@@ -1515,7 +1557,7 @@ void BUI_raster_image(BuiRaster *r,
         const int xa = clampi(tx, ix0, ix1), xb = clampi(tx + 1, ix0, ix1);
         c = bilerp(ra[xa], ra[xb], rb[xa], rb[xb], fx, fy);
       }
-      put_image_px(row + px, c, ga);
+      put_image_px(row + px, c, corner_ga(k, px, py, ga));
     }
   }
 }

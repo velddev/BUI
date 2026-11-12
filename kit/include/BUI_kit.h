@@ -422,7 +422,7 @@ typedef struct BKCanvasItem {
   const float *coords; /* x0 y0 x1 y1 ... in canvas space */
   int ncoords;
   float fill[4], outline[4]; /* alpha 0 = none */
-  float width, radius, size; /* line width, corner radius, text size (0 = UI) */
+  float width, radius, size; /* line width, corner radius (images too), text size (0 = UI) */
   float start, extent;       /* arcs, degrees */
   const char *text;
   int anchor;                /* BK_ANCHOR_* bits, 0 = center */

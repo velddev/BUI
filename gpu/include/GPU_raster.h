@@ -161,6 +161,19 @@ void BUI_raster_image(BuiRaster *r,
                       const float src[4],
                       float alpha,
                       int flags);
+/* BUI_raster_image with its corners rounded by `radius` (anti-aliased; at
+ * most half the shorter side). The CPU raster rounds them; GPU renderers
+ * draw the image square. */
+void BUI_raster_image_round(BuiRaster *r,
+                            float x,
+                            float y,
+                            float w,
+                            float h,
+                            const BuiPixmap *img,
+                            const float src[4],
+                            float alpha,
+                            int flags,
+                            float radius);
 
 /* The pixels named `key` (BuiPixmap.key) are gone for good: GPU renderers
  * free their copy (images too big for the atlas keep a texture of their own).

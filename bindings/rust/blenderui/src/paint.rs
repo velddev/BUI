@@ -230,11 +230,12 @@ enum Kind {
     Arc { start: f32, extent: f32 },
     /// `start..end` of the painter's text arena (NUL-terminated there).
     Text { start: u32, size: f32, flags: i32 },
-    Image(Arc<Image>),
+    /// An image, its corners rounded by `radius` (0: square).
+    Image(Arc<Image>, f32),
     /// A file by path (`start..` of the text arena, NUL-terminated), fitted
     /// into the box by `fit` (`sys::BK_FIT_*`); animations play (`frame` 0)
-    /// or hold frame `frame - 1`.
-    File { start: u32, fit: i32, frame: i32 },
+    /// or hold frame `frame - 1`. `radius` rounds the drawn image's corners.
+    File { start: u32, fit: i32, frame: i32, radius: f32 },
     /// A video's current frame, fitted by `fit`.
     Video(std::rc::Rc<crate::video::Video>, i32),
 }
@@ -382,26 +383,38 @@ impl Painter {
 
     /// An image scaled to `bounds`.
     pub fn image(&mut self, bounds: Bounds<f32>, image: &Arc<Image>) {
-        self.push(Kind::Image(image.clone()), Self::corners(bounds), Rgba::TRANSPARENT);
+        self.image_round(bounds, image, 0.0);
+    }
+
+    /// An image scaled to `bounds`, its corners rounded by `radius`.
+    pub fn image_round(&mut self, bounds: Bounds<f32>, image: &Arc<Image>, radius: f32) {
+        self.push(Kind::Image(image.clone(), radius.max(0.0)), Self::corners(bounds), Rgba::TRANSPARENT);
     }
 
     /// An image file (any format the kit reads) scaled to `bounds`. It
     /// decodes on the kit's worker threads at the size drawn and appears when
     /// ready; nothing loads while it is off screen.
     pub fn image_file(&mut self, bounds: Bounds<f32>, src: &str) {
-        self.file(bounds, src, sys::BK_FIT_FILL, None);
+        self.file(bounds, src, sys::BK_FIT_FILL, None, 0.0);
     }
 
     /// An image file covering `bounds` (CSS `object-fit: cover`: thumbnails).
     pub fn image_file_cover(&mut self, bounds: Bounds<f32>, src: &str) {
-        self.file(bounds, src, sys::BK_FIT_COVER, None);
+        self.file(bounds, src, sys::BK_FIT_COVER, None, 0.0);
+    }
+
+    /// An image file fitted into `bounds` by `fit` (`sys::BK_FIT_*`), the
+    /// image drawn with its corners rounded by `radius` (anti-aliased; the
+    /// CPU renderer rounds them, GPU renderers draw them square).
+    pub fn image_file_round(&mut self, bounds: Bounds<f32>, src: &str, fit: i32, radius: f32) {
+        self.file(bounds, src, fit, None, radius.max(0.0));
     }
 
     /// An image file scaled to `bounds`, an animation (GIF, animated WebP)
     /// held on `frame`; `None` plays it (what `image_file` does: each frame
     /// for its delay, looping as the file says, paused while off screen).
     pub fn image_file_frame(&mut self, bounds: Bounds<f32>, src: &str, frame: Option<u32>) {
-        self.file(bounds, src, sys::BK_FIT_FILL, frame);
+        self.file(bounds, src, sys::BK_FIT_FILL, frame, 0.0);
     }
 
     /// A video's current frame fitted into `bounds` (`fit`: `sys::BK_FIT_*`); it
@@ -410,13 +423,13 @@ impl Painter {
         self.push(Kind::Video(video.clone(), fit), Self::corners(bounds), Rgba::TRANSPARENT);
     }
 
-    fn file(&mut self, bounds: Bounds<f32>, src: &str, fit: i32, frame: Option<u32>) {
+    fn file(&mut self, bounds: Bounds<f32>, src: &str, fit: i32, frame: Option<u32>, radius: f32) {
         if !src.is_empty() {
             let start = self.text.len() as u32;
             self.text.extend(src.bytes().filter(|&b| b != 0));
             self.text.push(0);
             let frame = frame.map_or(0, |f| f.saturating_add(1).min(i32::MAX as u32) as i32);
-            self.push(Kind::File { start, fit, frame }, Self::corners(bounds), Rgba::TRANSPARENT);
+            self.push(Kind::File { start, fit, frame, radius }, Self::corners(bounds), Rgba::TRANSPARENT);
         }
     }
 
@@ -480,19 +493,21 @@ impl Painter {
                 ci.anchor = sys::BK_ANCHOR_N | sys::BK_ANCHOR_W;
                 ci.text = self.text[*start as usize..].as_ptr().cast();
             }
-            Kind::Image(img) => {
+            Kind::Image(img, radius) => {
                 ci.type_ = sys::BK_ITEM_IMAGE;
                 ci.imbuf = img.as_ptr();
                 ci.fit = sys::BK_FIT_FILL;
+                ci.radius = radius * scale;
             }
             Kind::Video(v, fit) => {
                 ci.type_ = sys::BK_ITEM_IMAGE;
                 ci.video = v.as_ptr();
                 ci.fit = *fit;
             }
-            Kind::File { start, fit, frame } => {
+            Kind::File { start, fit, frame, radius } => {
                 ci.type_ = sys::BK_ITEM_IMAGE;
                 ci.fit = *fit;
+                ci.radius = radius * scale;
                 ci.frame = *frame;
                 match sync {
                     Some(keep) => {
@@ -580,8 +595,10 @@ impl Painter {
                     let end = t.iter().position(|&b| b == 0).unwrap_or(t.len());
                     (5u8, &t[..end], size.to_bits(), flags).hash(h)
                 }
-                Kind::Image(img) => (6u8, Arc::as_ptr(img) as usize).hash(h),
-                Kind::File { start, fit, frame } => (7u8, self.arena_str(*start), fit, frame).hash(h),
+                Kind::Image(img, radius) => (6u8, Arc::as_ptr(img) as usize, radius.to_bits()).hash(h),
+                Kind::File { start, fit, frame, radius } => {
+                    (7u8, self.arena_str(*start), fit, frame, radius.to_bits()).hash(h)
+                }
                 Kind::Video(v, fit) => (8u8, std::rc::Rc::as_ptr(v) as usize, fit).hash(h),
             }
             if let Some(c) = it.clip {
@@ -1085,7 +1102,19 @@ fn paint_node(frame: &Frame, styles: &StyleStore, tc: &mut TextCache, i: usize, 
             }
             if let Content::Replaced(r) = &n.content {
                 let inner = content_box(c, b);
+                // border-radius rounds the image too (by what is left of it inside the box)
+                let round = (radius_px(c, b, vp) - (inner.origin.x - b.origin.x)).max(0.0);
+                let centred = c.images.as_ref().is_none_or(|st| st.object_position == [crate::style::Pos::CENTER; 2]);
+                let fit = c.images.as_ref().map_or(crate::style::ObjectFit::Fill, |st| st.object_fit);
                 match r {
+                    Replaced::File(file, frame) if round > 0.0 && centred
+                        && matches!(fit, crate::style::ObjectFit::Fill | crate::style::ObjectFit::Cover) => {
+                        let kfit = if fit == crate::style::ObjectFit::Cover { sys::BK_FIT_COVER } else { sys::BK_FIT_FILL };
+                        p.file(inner, &file.src, kfit, *frame, round);
+                    }
+                    Replaced::Image(img) if round > 0.0 && centred && fit == crate::style::ObjectFit::Fill => {
+                        p.image_round(inner, img, round);
+                    }
                     Replaced::Image(img) => match &c.images {
                         Some(st) if st.object_fit != crate::style::ObjectFit::Fill
                             || st.object_position != [crate::style::Pos::CENTER; 2] => {

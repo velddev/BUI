@@ -122,6 +122,9 @@ impl PaintSink for PainterSink<'_> {
     fn image(&mut self, r: Rect, src: &str) {
         self.p.image_file_cover(bounds(r, self.origin), src);
     }
+    fn image_round(&mut self, r: Rect, radius: f32, src: &str) {
+        self.p.image_file_round(bounds(r, self.origin), src, sys::BK_FIT_COVER, radius);
+    }
     fn clipped(&mut self, r: Rect, f: &mut dyn FnMut(&mut dyn PaintSink)) {
         let (origin, scale) = (self.origin, self.scale);
         let widths = &mut *self.widths;

@@ -157,17 +157,17 @@ bool bk_image_ref_resolve(const BKImageRef *ref, int fit, int frame, const float
   return r->dst[2] > 0.0f && r->dst[3] > 0.0f;
 }
 
-void bk_image_draw_resolved(BuiRaster *r, const BKImageDraw *d, float alpha)
+void bk_image_draw_resolved(BuiRaster *r, const BKImageDraw *d, float alpha, float radius)
 {
   const BuiPixmap pm = imb_pixmap(d->ib);
-  BUI_raster_image(r, d->dst[0], d->dst[1], d->dst[2], d->dst[3], &pm, d->src, alpha, 0);
+  BUI_raster_image_round(r, d->dst[0], d->dst[1], d->dst[2], d->dst[3], &pm, d->src, alpha, 0, radius);
 }
 
 void bk_image_ref_draw(const BKImageRef *ref, int fit, int frame, const float box[4], float alpha)
 {
   BKImageDraw d;
   if (bk_image_ref_resolve(ref, fit, frame, box, &d)) {
-    bk_image_draw_resolved(bk_draw.r, &d, alpha);
+    bk_image_draw_resolved(bk_draw.r, &d, alpha, 0.0f);
   }
 }
 
