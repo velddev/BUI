@@ -1053,12 +1053,18 @@ impl Window {
         self.state.focused_id.as_deref()
     }
 
-    /// Focus the element with `.id(id)` (keyboard events go to it).
+    /// Focus the element with `.id(id)` (keyboard events go to it). A
+    /// widget (`<textarea>`, `<input>` ...) also gets the kit's focus, so it
+    /// takes typed text again after it gave the focus up (Escape).
     pub fn focus_id(&mut self, id: &str) {
         let key = id_key(id);
         self.state.focused = Some(key);
         self.state.focus_path = [key].into_iter().collect();
         self.state.focused_id = Some(id.to_owned());
+        if let Some(w) = self.widgets.nodes.get(&key) {
+            // SAFETY: a live widget node of this window's kit context.
+            unsafe { sys::BK_focus_node(self.ctx, w.node) };
+        }
         self.dirty = true;
     }
 

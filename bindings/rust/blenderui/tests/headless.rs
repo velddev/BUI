@@ -404,3 +404,24 @@ fn textarea_caret_and_edge_jump() {
         assert_eq!(caret(cx, "stay"), Some(TextCaret::at(2)));
     });
 }
+
+#[test]
+fn focus_id_gives_a_textarea_the_kit_focus_back() {
+    Application::headless().run(|cx| {
+        let win = open(cx, 400.0, 600.0, TextBoxes);
+        let id = win.id;
+        cx.draw(id);
+        let caret = |cx: &mut App| win.update(cx, |_, w, _| w.textarea_caret("jump")).unwrap();
+        let b = cx.element_bounds(id, "jump").unwrap();
+        cx.simulate_click(id, b.origin.x + 4.0, b.origin.y + 4.0);
+        assert!(win.update(cx, |_, w, _| w.set_textarea_caret("jump", TextCaret::at(0))).unwrap());
+        // Escape: the textarea gives the focus up, typing goes nowhere
+        cx.simulate_key(id, "", "Escape");
+        cx.simulate_key(id, "x", "x");
+        assert_eq!(caret(cx), Some(TextCaret::at(0)));
+        // focus_id hands it the keyboard again, without a click
+        win.update(cx, |_, w, _| w.focus_id("jump"));
+        cx.simulate_key(id, "x", "x");
+        assert_eq!(caret(cx), Some(TextCaret::at(1)));
+    });
+}
