@@ -23,6 +23,9 @@ use crate::widgets::{WKind, Widgets};
 pub use crate::widgets::TextCaret;
 use blenderui_sys as sys;
 
+/// How early a timer may fire and still count as due, s.
+pub(crate) const TIMER_SLOP: f64 = 0.0005;
+
 // ==========================================================================
 // Entities
 
@@ -658,11 +661,8 @@ impl App {
             if w.caches.anim.any() {
                 w.dirty = true;
             }
-            // a scrollbar's hold ended (headless windows have no timers)
-            if w.bars_due.is_some_and(|due| due <= w.clock.now()) {
-                w.bars_due = None;
-                w.dirty = true;
-            }
+            // a scrollbar's hold or a tooltip's wait ended (headless windows have no timers)
+            w.timer_fired();
         }
         self.flush();
     }
@@ -781,11 +781,7 @@ unsafe extern "C" fn on_timer(data: *mut c_void, _win: *mut sys::BKWindow, _id: 
         app.drain();
         app.with_window(id, |w, app| {
             w.timer_pending = false;
-            // a scrollbar's hold ended: draw it fading
-            if w.bars_due.is_some_and(|due| due <= w.clock.now() + 0.002) {
-                w.bars_due = None;
-                w.dirty = true;
-            }
+            w.timer_fired();
             if w.dirty {
                 w.rebuild(app);
             }
@@ -893,8 +889,11 @@ pub struct Window {
     press_button: MouseButton,
     /// The overlay scrollbars' state (`crate::scrollbar`).
     bars: crate::scrollbar::Bars,
-    /// When the timer that ends a scrollbar's hold fires (clock seconds).
-    bars_due: Option<f64>,
+    /// When the next timer fires (clock seconds): a scrollbar's hold ends,
+    /// a tooltip's wait.
+    due: Option<f64>,
+    /// The tooltip (`crate::tooltip`).
+    tips: crate::tooltip::Tips,
 }
 
 impl Window {
@@ -952,7 +951,8 @@ impl Window {
                 pressed: Vec::new(),
                 press_button: MouseButton::Left,
                 bars: crate::scrollbar::Bars::default(),
-                bars_due: None,
+                due: None,
+                tips: crate::tooltip::Tips::default(),
             };
             if headless {
                 win.scale = sys::BK_scale().max(1.0);
@@ -1130,6 +1130,34 @@ impl Window {
     }
 
     /// Scroll offset of a scroll container with `.id(id)`.
+    /// How long the pointer rests on an element with a `title` before its
+    /// tooltip shows ([`crate::tooltip::DELAY`] unless set).
+    pub fn set_tooltip_delay(&mut self, delay: std::time::Duration) {
+        self.tips.delay = delay.as_secs_f64();
+    }
+
+    /// Let tooltips show (the default), or hide them and wait for none,
+    /// say while a menu is open. Call it while rendering: it applies to the
+    /// frame being built.
+    pub fn set_tooltips(&mut self, on: bool) {
+        self.tips.on = on;
+    }
+
+    /// Hide the tooltip until the pointer leaves its element, as a click or
+    /// a key does.
+    pub fn hush_tooltip(&mut self) {
+        if self.tips.hush() {
+            self.dirty = true;
+        }
+    }
+
+    /// The text of the tooltip showing, if one is.
+    pub fn tooltip(&self) -> Option<&str> {
+        self.tips.at?;
+        let f = self.frame.as_ref()?;
+        f.attr(*f.by_key().get(&self.tips.key()?)?, "title")
+    }
+
     pub fn scroll_offset(&self, id: &str) -> (f32, f32) {
         self.state.scroll.get(&id_key(id)).copied().unwrap_or((0.0, 0.0))
     }
@@ -1186,9 +1214,14 @@ impl Window {
         let (canvas, scale) = (self.canvas, self.scale);
         let widgets = &mut self.widgets;
         let recycle = self.frame.take().unwrap_or_default();
+        let tooltip = self.tips.update(self.clock.now(), self.pointer).then(|| {
+            let f = recycle.by_key().get(&self.tips.key()?).copied()?;
+            recycle.attr(f, "title").map(crate::tooltip::element)
+        }).flatten();
         self.caches.anim.begin(self.clock.now());
-        let frame = layout(root, vp, &self.state, &mut self.caches, recycle,
-                           &mut |key, spec| widgets.ensure(canvas, key, spec, scale));
+        let mut frame = layout(root, tooltip, vp, &self.state, &mut self.caches, recycle,
+                               &mut |key, spec| widgets.ensure(canvas, key, spec, scale));
+        self.place_tooltip(&mut frame, vp);
         // CSS animations / transitions still moving: render again next frame
         // (nothing running: no frames, so an idle window costs no CPU)
         let animating = self.caches.anim.end();
@@ -1239,6 +1272,60 @@ impl Window {
             self.request_animation_frame();
         }
         self.wake_for_bars(now, reduced);
+        if let Some(due) = self.tips.due() {
+            self.wake_at(due);
+        }
+    }
+
+    // -- timers ------------------------------------------------------------------------------
+
+    /// Draw again at clock time `due` (a timer; headless windows wait for
+    /// `App::advance_clock`). An earlier timer on its way is kept: the frame
+    /// it draws asks again.
+    fn wake_at(&mut self, due: f64) {
+        if self.due.is_some_and(|d| d <= due + 0.001) {
+            return;
+        }
+        self.due = Some(due);
+        if let Some(n) = self.native {
+            let ms = ((due - self.clock.now()) * 1000.0).ceil().max(0.0) as c_int + 1;
+            // SAFETY: a live native window; the timer comes back through on_timer.
+            unsafe { sys::BK_window_timer(n, ms) };
+        }
+    }
+
+    /// A timer fired (or the clock moved): draw if one was due.
+    fn timer_fired(&mut self) {
+        if self.due.is_some_and(|due| due <= self.clock.now() + TIMER_SLOP) {
+            self.due = None;
+            self.dirty = true;
+        }
+    }
+
+    // -- tooltips ----------------------------------------------------------------------------
+
+    /// Put the tooltip laid out in `frame` (at the window's corner) where it
+    /// hangs from the pointer.
+    fn place_tooltip(&self, frame: &mut Frame, vp: (f32, f32)) {
+        let Some(at) = self.tips.at else { return };
+        let Some(&i) = frame.by_key().get(&crate::layout::id_key(crate::tooltip::KEY)) else { return };
+        let b = frame.nodes[i].bounds;
+        let (x, y) = crate::tooltip::place(at, (b.size.width, b.size.height), vp);
+        frame.shift(i, x - b.origin.x, y - b.origin.y);
+    }
+
+    /// The pointer moved, or the frame changed under it: follow the titled
+    /// element it is on.
+    fn hover_tooltip(&mut self, path: &[Key]) {
+        let Some(f) = &self.frame else { return };
+        let titled = path.iter().rev().copied()
+            .find(|k| f.by_key().get(k).is_some_and(|&i| f.attr(i, "title").is_some_and(|t| !t.is_empty())));
+        if self.tips.set_over(titled, self.clock.now()) {
+            self.dirty = true;
+        }
+        if let Some(due) = self.tips.due() {
+            self.wake_at(due);
+        }
     }
 
     // -- overlay scrollbars ------------------------------------------------------------------
@@ -1271,17 +1358,7 @@ impl Window {
         match self.bars.wake(now, reduced) {
             crate::scrollbar::Wake::Idle => {}
             crate::scrollbar::Wake::Frame => self.request_animation_frame(),
-            crate::scrollbar::Wake::After(s) => {
-                let due = now + s;
-                if self.bars_due.is_some_and(|d| d <= due + 0.001) {
-                    return; // a timer is on its way
-                }
-                self.bars_due = Some(due);
-                if let Some(n) = self.native {
-                    // SAFETY: a live native window; the timer comes back through on_timer.
-                    unsafe { sys::BK_window_timer(n, (s * 1000.0).ceil() as c_int + 1) };
-                }
-            }
+            crate::scrollbar::Wake::After(s) => self.wake_at(now + s),
         }
     }
 
@@ -1381,6 +1458,7 @@ impl Window {
 
     fn update_hover(&mut self, app: &mut App, fire: bool) {
         let path = self.path_at(self.pointer.0, self.pointer.1);
+        self.hover_tooltip(&path);
         let now: std::collections::HashSet<Key> = path.iter().copied().collect();
         if now == self.state.hovered {
             return;
@@ -1485,6 +1563,7 @@ impl Window {
                 if button == MouseButton::Left && self.grab_bar(y) {
                     return;
                 }
+                self.hush_tooltip();
                 let path = self.path_at(x, y);
                 self.press_button = button;
                 self.state.active = path.iter().copied().collect();
@@ -1544,6 +1623,7 @@ impl Window {
                 let target = self.state.focused.or_else(|| self.state_deepest())
                     .unwrap_or(crate::layout::ROOT_KEY);
                 if ev.kind == sys::BK_EV_KEY {
+                    self.hush_tooltip();
                     self.emit(app, target, &KeyDownEvent { keystroke: ks }, |l| l.key_down.iter().collect());
                 } else {
                     self.emit(app, target, &KeyUpEvent { keystroke: ks }, |l| l.key_up.iter().collect());

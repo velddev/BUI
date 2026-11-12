@@ -2192,8 +2192,9 @@ fn transform(s: &str, t: TextTransform, ws: WhiteSpace, tab: u8) -> std::borrow:
 
 /// Build, cascade and lay out `root` in a `viewport` (logical pixels),
 /// reusing the arenas of `recycle` (the previous frame) and `caches`.
-pub(crate) fn layout(root: AnyElement, viewport: (f32, f32), state: &UiState, caches: &mut LayoutCaches,
-                     recycle: Frame, widgets: &mut dyn FnMut(Key, &WidgetSpec) -> (f32, f32)) -> Frame {
+pub(crate) fn layout(root: AnyElement, tooltip: Option<Div>, viewport: (f32, f32), state: &UiState,
+                     caches: &mut LayoutCaches, recycle: Frame,
+                     widgets: &mut dyn FnMut(Key, &WidgetSpec) -> (f32, f32)) -> Frame {
     let mut css = String::new();
     let mut title = None;
     caches.tw.on = TAILWIND.load(std::sync::atomic::Ordering::Relaxed);
@@ -2260,6 +2261,11 @@ pub(crate) fn layout(root: AnyElement, viewport: (f32, f32), state: &UiState, ca
             body.children.push(other);
             crate::html::html().child(body)
         }
+    };
+    // the tooltip goes last in the document (`crate::tooltip`)
+    let root_div = match tooltip {
+        Some(t) => root_div.child(t),
+        None => root_div,
     };
     let s = span(Phase::Build);
     let root = match b.element(root_div, None, ROOT_KEY, (1, 1)) {
@@ -2531,6 +2537,32 @@ impl Frame {
 
     pub(crate) fn attr(&self, i: usize, name: &str) -> Option<&str> {
         el_attr(&self.nodes, &self.els, i, name)
+    }
+
+    /// Move box `i` and everything inside it by (`dx`, `dy`), after layout.
+    pub(crate) fn shift(&mut self, i: usize, dx: f32, dy: f32) {
+        let inside = |nodes: &[BoxNode], mut k: usize| loop {
+            if k == i {
+                return true;
+            }
+            match nodes[k].parent {
+                Some(p) => k = p,
+                None => return false,
+            }
+        };
+        // a subtree's boxes come after its root
+        for k in i..self.nodes.len() {
+            if !inside(&self.nodes, k) {
+                continue;
+            }
+            let n = &mut self.nodes[k];
+            n.bounds.origin.x += dx;
+            n.bounds.origin.y += dy;
+            if let Some(c) = &mut n.clip {
+                c.origin.x += dx;
+                c.origin.y += dy;
+            }
+        }
     }
 
     /// Element children of box `i`.

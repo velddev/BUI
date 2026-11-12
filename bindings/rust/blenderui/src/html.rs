@@ -127,6 +127,10 @@ audio:not([controls]) { display: none; }
 iframe { border: 2px inset #808080; }
 label { cursor: default; }
 output { display: inline; }
+bui-tooltip { display: block; position: fixed; z-index: 1000; pointer-events: none; max-width: 400px;
+              padding: 4px 8px; background-color: #191919; color: #e6e6e6; border: 1px solid #000000;
+              border-radius: 4px; font-size: 12px; white-space: pre-line;
+              box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4); }
 
 "#;
 

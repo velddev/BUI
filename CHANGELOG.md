@@ -6,6 +6,12 @@ All notable changes to **blenderui** (BUI). The format follows
 
 ## [Unreleased]
 
+### Added
+- **Tooltips (Rust):** an element's `title` shows in a `<bui-tooltip>` after the pointer rests on it
+  (`Window::set_tooltip_delay`, 1 s by default), hidden on leave, on a click or key until the pointer leaves, and
+  while the app turns them off (`Window::set_tooltips`). It hangs below the pointer inside the window, flipped
+  above without room, and stylesheets style it like any element.
+
 ## [0.5.0] - 2026-11-08
 
 ### Added

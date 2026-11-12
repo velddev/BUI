@@ -433,6 +433,30 @@ gets `on_click`.
 Positions are logical pixels. Clicking an element focuses it; key events go
 to the focused element and bubble up. `cx.stop_propagation()` stops bubbling.
 
+## Tooltips
+
+An element's `title` (`.title("Save the file")`, `<button title="...">`) shows
+in a tooltip once the pointer has rested on it for a second; a child shows
+its nearest titled ancestor's. Moving onto another titled element starts the
+wait again. The tooltip goes at once when the pointer leaves, and a click or a
+key hides it until the pointer leaves the element. It hangs below the pointer,
+inside the window, and above the pointer when there's no room below.
+
+| `Window` method | |
+| --- | --- |
+| `set_tooltip_delay(Duration)` | The wait (1 s by default) |
+| `set_tooltips(bool)` | Turn them off, say while a menu is open; call it while rendering |
+| `hush_tooltip()` | Hide it until the pointer leaves, as a click does |
+| `tooltip()` | The text showing, if any (for tests) |
+
+The tooltip is a `<bui-tooltip>` element at the end of the document, so a
+stylesheet styles it like any other (the default is Blender's: dark, 12px,
+`z-index: 1000`):
+
+```css
+bui-tooltip { background: #2b2b2b; border-radius: 6px; padding: 6px 8px; z-index: 2; }
+```
+
 ## Images
 
 `<img src>` and CSS background images read every format the kit reads (PNG,
