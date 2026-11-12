@@ -66,13 +66,25 @@ pub fn custom(tag: &'static str) -> Div {
     Div::new(tag)
 }
 
+/// The tooltip's defaults (`crate::tooltip`), in both UA sheets: Blender's
+/// tooltip look in and out of `styled`.
+macro_rules! tooltip_css {
+    () => {
+        "bui-tooltip { display: block; position: fixed; z-index: 1000; pointer-events: none; max-width: 400px;
+              padding: 4px 8px; background-color: #191919; color: #e6e6e6; border: 1px solid #000000;
+              border-radius: 4px; font-size: 12px; white-space: pre-line;
+              box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4); }
+"
+    };
+}
+
 /// The user-agent stylesheet: the browsers' defaults (WHATWG rendering
 /// section: black text on white). An element with the `styled` attribute
 /// (`div().styled()`, `<div styled>`) and everything inside it get Blender's
 /// theme (dark, or light with `BUI_THEME` / `set_theme`) instead. Outside
 /// `styled`, form controls are drawn like a browser's; inside it they are
 /// Blender's widgets, and the Blender components always are.
-pub const UA_CSS: &str = r#"
+pub const UA_CSS: &str = concat!(r#"
 html { display: block; background-color: #ffffff; color: #000000; font-size: 16px; }
 body { display: block; margin: 8px; }
 address, article, aside, blockquote, dd, details, dialog, div, dl, dt, fieldset, figcaption,
@@ -127,17 +139,13 @@ audio:not([controls]) { display: none; }
 iframe { border: 2px inset #808080; }
 label { cursor: default; }
 output { display: inline; }
-bui-tooltip { display: block; position: fixed; z-index: 1000; pointer-events: none; max-width: 400px;
-              padding: 4px 8px; background-color: #191919; color: #e6e6e6; border: 1px solid #000000;
-              border-radius: 4px; font-size: 12px; white-space: pre-line;
-              box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4); }
 
-"#;
+"#, tooltip_css!());
 
 /// The user-agent stylesheet inside `styled` subtrees: the same defaults in
 /// Blender's dark theme. The `styled` element itself gets the theme's
 /// background, text colour and 13px UI font size.
-pub const UA_STYLED_CSS: &str = r#"
+pub const UA_STYLED_CSS: &str = concat!(r#"
 html { display: block; }
 [styled] { background-color: #303030; color: #e6e6e6; font-size: 13px; font-family: system-ui; }
 body { display: block; margin: 8px; }
@@ -202,7 +210,7 @@ audio:not([controls]) { display: none; }
 iframe, embed, object, video { border: 1px solid #484848; }
 label { cursor: default; }
 output { display: inline; }
-"#;
+"#, tooltip_css!());
 
 /// The parsed user-agent stylesheet (shared, parsed once).
 pub fn ua_stylesheet() -> &'static Stylesheet {

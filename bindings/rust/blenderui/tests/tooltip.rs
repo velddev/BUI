@@ -40,6 +40,35 @@ fn wait(cx: &mut App, ms: u64) {
     cx.advance_clock(Duration::from_millis(ms));
 }
 
+struct StyledDoc;
+
+impl Render for StyledDoc {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        html().styled().child(body().m_0().child(div().id("a").w(px(60.0)).h(px(20.0)).title("Save the file")))
+    }
+}
+
+#[test]
+fn a_styled_document_places_it_too() {
+    Application::headless().run(|cx| {
+        let opts = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds {
+                origin: point(px(0.0), px(0.0)),
+                size: size(px(200.0), px(120.0)),
+            })),
+            ..Default::default()
+        };
+        let win = cx.open_window(opts, |_, cx| cx.new(|_| StyledDoc)).unwrap();
+        cx.draw(win.id);
+        cx.simulate_mouse_move(win.id, 10.0, 10.0);
+        wait(cx, 1000);
+        assert_eq!(cx.window(win.id).unwrap().tooltip(), Some("Save the file"));
+        let b = cx.element_bounds(win.id, "bui-tooltip").unwrap();
+        assert_eq!((b.origin.x, b.origin.y), (10.0, 30.0));
+        assert!(b.size.width < 150.0, "shrinks to its text: {b:?}");
+    });
+}
+
 #[test]
 fn a_title_shows_after_the_delay_and_hides_on_leave_click_key_and_off() {
     Application::headless().run(|cx| {
