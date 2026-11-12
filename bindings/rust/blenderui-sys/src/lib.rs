@@ -55,6 +55,10 @@ pub const BK_SHIFT: c_int = 1;
 pub const BK_CTRL: c_int = 2;
 pub const BK_ALT: c_int = 4;
 pub const BK_BUTTON1: c_int = 8;
+/// macOS's Command key; set together with `BK_CTRL` (the kit's own shortcuts take it as Ctrl).
+pub const BK_CMD: c_int = 64;
+/// macOS's Control key itself; set together with `BK_CTRL`, so Control and Command differ.
+pub const BK_CONTROL_KEY: c_int = 128;
 
 // Geometry managers and anchors.
 pub const BK_GEOM_NONE: c_int = 0;

@@ -69,8 +69,20 @@ typedef struct BKNode BKNode;
 typedef struct BKContext BKContext;
 typedef struct BKTreeItem BKTreeItem;
 
-/* Modifier / button state bits for input calls. */
-enum { BK_SHIFT = 1, BK_CTRL = 2, BK_ALT = 4, BK_BUTTON1 = 8, BK_BUTTON2 = 16, BK_BUTTON3 = 32 };
+/* Modifier / button state bits for input calls.
+ * macOS: Command sets BK_CTRL | BK_CMD (the kit's own shortcuts take Command as Ctrl, as
+ * Blender's macOS keymaps do) and the Control key sets BK_CTRL | BK_CONTROL_KEY, so bindings
+ * can tell the two apart. No other host sets BK_CMD or BK_CONTROL_KEY. */
+enum {
+  BK_SHIFT = 1,
+  BK_CTRL = 2,
+  BK_ALT = 4,
+  BK_BUTTON1 = 8,
+  BK_BUTTON2 = 16,
+  BK_BUTTON3 = 32,
+  BK_CMD = 64,
+  BK_CONTROL_KEY = 128,
+};
 
 /* Mouse cursors requested through BKHost.set_cursor. */
 enum {

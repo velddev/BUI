@@ -282,6 +282,8 @@ typedef struct BKEvent {
 #define EV_SHIFT(e) (((e)->mods & BK_SHIFT) != 0)
 #define EV_CTRL(e) (((e)->mods & BK_CTRL) != 0)
 #define EV_ALT(e) (((e)->mods & BK_ALT) != 0)
+/* macOS's Control key without Command: Cocoa text fields' Emacs keys, never a shortcut. */
+#define BK_MAC_CONTROL(mods) (((mods) & (BK_CONTROL_KEY | BK_CMD)) == BK_CONTROL_KEY)
 
 typedef struct BKClass {
   const char *name;

@@ -241,13 +241,17 @@ static BUIKitView *view_of(NSWindow *w)
 
 static int mods_of(NSEventModifierFlags f)
 {
-  /* Command is Ctrl, as Blender's macOS keymaps use it for Ctrl's shortcuts */
+  /* Command is Ctrl, as Blender's macOS keymaps use it for Ctrl's shortcuts; BK_CMD and
+   * BK_CONTROL_KEY say which key it was */
   int m = 0;
   if (f & NSEventModifierFlagShift) {
     m |= BK_SHIFT;
   }
-  if (f & (NSEventModifierFlagControl | NSEventModifierFlagCommand)) {
-    m |= BK_CTRL;
+  if (f & NSEventModifierFlagControl) {
+    m |= BK_CTRL | BK_CONTROL_KEY;
+  }
+  if (f & NSEventModifierFlagCommand) {
+    m |= BK_CTRL | BK_CMD;
   }
   if (f & NSEventModifierFlagOption) {
     m |= BK_ALT;

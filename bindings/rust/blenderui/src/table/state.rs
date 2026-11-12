@@ -98,7 +98,7 @@ impl<D: TableDelegate> DerefMut for TableState<D> {
 }
 
 const fn mods(m: Modifiers) -> Mods {
-    Mods { shift: m.shift, control: m.control, alt: m.alt }
+    Mods { shift: m.shift, control: m.control || m.platform, alt: m.alt }
 }
 
 impl<D: TableDelegate> TableState<D> {

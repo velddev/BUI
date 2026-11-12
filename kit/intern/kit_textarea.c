@@ -440,7 +440,40 @@ static int ta_key(BKNode *n, BKEvent *e)
   }
   TAData *t = TA(n);
   const char *ks = e->keysym;
-  const bool ctrl = EV_CTRL(e), shift = EV_SHIFT(e);
+  bool ctrl = EV_CTRL(e);
+  const bool shift = EV_SHIFT(e);
+  if (BK_MAC_CONTROL(e->mods)) {
+    /* macOS: Control alone is never a shortcut; its letters are Cocoa's Emacs keys */
+    ctrl = false;
+    if (bk_keysym_is(ks, "k")) {
+      /* kill to the line's end; at its end, the newline */
+      const int line_e = line_end(t, line_of(t, t->caret));
+      const int end = line_e > t->caret ? line_e : BK_MIN(t->caret + 1, t->len);
+      if (end > t->caret) {
+        bk_undo_record(n, 1);
+        ta_delete_raw(t, t->caret, end);
+      }
+      t->anchor = -1;
+      ta_reindex(t);
+      t->want_x = caret_x(t, t->caret);
+      ta_changed(n);
+      BK_textarea_see(n, t->caret);
+      return 1;
+    }
+    static const char *const emacs[][2] = {{"a", "Home"},  {"e", "End"},  {"b", "Left"},
+                                           {"f", "Right"}, {"p", "Up"},   {"n", "Down"},
+                                           {"d", "Delete"}, {"h", "BackSpace"}};
+    const char *mapped = NULL;
+    for (size_t i = 0; i < sizeof(emacs) / sizeof(emacs[0]); i++) {
+      if (bk_keysym_is(ks, emacs[i][0])) {
+        mapped = emacs[i][1];
+      }
+    }
+    if (!mapped) {
+      return 0;
+    }
+    ks = mapped;
+  }
   int a, b;
   const bool sel = BK_textarea_selection(n, &a, &b);
   bool edited = false, keep_x = false;

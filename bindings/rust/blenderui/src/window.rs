@@ -743,6 +743,16 @@ impl App {
         });
     }
 
+    /// A key with these modifier keys held, as the host would report them
+    /// (`platform` is Command, as Cocoa sends it).
+    pub fn simulate_key_mods(&mut self, window: WindowId, text: &str, keysym: &str, mods: crate::Modifiers) {
+        let mods = mods.to_kit();
+        let (t, k) = (CString::new(text).unwrap_or_default(), CString::new(keysym).unwrap_or_default());
+        self.input(window, |ctx, _| unsafe {
+            sys::BK_key(ctx, t.as_ptr(), k.as_ptr(), mods);
+        });
+    }
+
     /// Scroll the wheel at (x, y): positive `lines` scroll the content up.
     pub fn simulate_scroll(&mut self, window: WindowId, x: f32, y: f32, lines: i32) {
         self.simulate_mouse_move(window, x, y);

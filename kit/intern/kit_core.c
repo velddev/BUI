@@ -3080,7 +3080,9 @@ static int te_key(BKTextEdit *te, BKContext *ctx, const char *text, const char *
  * the edit's own stack (interface_undo.cc); every other change is pushed. */
 int bk_te_key(BKTextEdit *te, BKContext *ctx, const char *text, const char *ks, int mods)
 {
-  if ((mods & BK_CTRL) && !(mods & BK_ALT) && (bk_keysym_is(ks, "z") || bk_keysym_is(ks, "y"))) {
+  if ((mods & BK_CTRL) && !(mods & BK_ALT) && !BK_MAC_CONTROL(mods) &&
+      (bk_keysym_is(ks, "z") || bk_keysym_is(ks, "y")))
+  {
     const bool is_redo = (mods & BK_SHIFT) || bk_keysym_is(ks, "y");
     int undo_pos;
     const char *undo_str = bk_textedit_undo(te->undo, is_redo ? 1 : -1, &undo_pos);
@@ -3112,7 +3114,29 @@ int bk_te_key(BKTextEdit *te, BKContext *ctx, const char *text, const char *ks, 
 
 static int te_key(BKTextEdit *te, BKContext *ctx, const char *text, const char *ks, int mods)
 {
-  const bool ctrl = mods & BK_CTRL, shift = mods & BK_SHIFT;
+  bool ctrl = mods & BK_CTRL;
+  const bool shift = mods & BK_SHIFT;
+  if (BK_MAC_CONTROL(mods)) {
+    /* macOS: Control alone is never a shortcut; its letters are Cocoa's Emacs keys */
+    ctrl = false;
+    static const char *const emacs[][2] = {{"a", "Home"},  {"e", "End"},    {"b", "Left"},
+                                           {"f", "Right"}, {"d", "Delete"}, {"h", "BackSpace"}};
+    if (bk_keysym_is(ks, "k")) {
+      te->anchor = -1;
+      te_delete(te, te->caret, te->len);
+      return TE_CHANGED;
+    }
+    const char *mapped = NULL;
+    for (size_t i = 0; i < sizeof(emacs) / sizeof(emacs[0]); i++) {
+      if (bk_keysym_is(ks, emacs[i][0])) {
+        mapped = emacs[i][1];
+      }
+    }
+    if (!mapped) {
+      return TE_NONE;
+    }
+    ks = mapped;
+  }
   if (bk_keysym_is(ks, "ISO_Left_Tab")) { /* X11's Shift+Tab */
     return TE_PREV;
   }

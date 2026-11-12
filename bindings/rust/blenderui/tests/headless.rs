@@ -405,6 +405,34 @@ fn textarea_caret_and_edge_jump() {
     });
 }
 
+/// Command (`platform`) takes the text box's shortcuts as Ctrl does: ⌘A selects everything.
+/// On macOS the Control key alone edits as Cocoa's text fields do (Control+A/E: the line's
+/// start and end), never a shortcut.
+#[test]
+fn command_is_ctrl_to_text_boxes_and_control_alone_edits_on_macos() {
+    Application::headless().run(|cx| {
+        let win = open(cx, 400.0, 600.0, TextBoxes);
+        let id = win.id;
+        cx.draw(id);
+        let caret = |cx: &mut App| win.update(cx, |_, w, _| w.textarea_caret("jump")).unwrap();
+        let b = cx.element_bounds(id, "jump").unwrap();
+        cx.simulate_click(id, b.origin.x + 4.0, b.origin.y + 4.0);
+        // "one\ntwo\nthree", in "two"
+        assert!(win.update(cx, |_, w, _| w.set_textarea_caret("jump", TextCaret::at(5))).unwrap());
+        let cmd = Modifiers { platform: true, ..Default::default() };
+        cx.simulate_key_mods(id, "", "a", cmd);
+        assert_eq!(caret(cx), Some(TextCaret { anchor: 0, caret: 13 }), "⌘A: everything");
+        if cfg!(target_os = "macos") {
+            assert!(win.update(cx, |_, w, _| w.set_textarea_caret("jump", TextCaret::at(5))).unwrap());
+            let control = Modifiers { control: true, ..Default::default() };
+            cx.simulate_key_mods(id, "", "e", control);
+            assert_eq!(caret(cx), Some(TextCaret::at(7)), "Control+E: the line's end");
+            cx.simulate_key_mods(id, "", "a", control);
+            assert_eq!(caret(cx), Some(TextCaret::at(4)), "Control+A: the line's start, not everything");
+        }
+    });
+}
+
 #[test]
 fn focus_id_gives_a_textarea_the_kit_focus_back() {
     Application::headless().run(|cx| {

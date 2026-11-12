@@ -288,7 +288,7 @@ impl JsView {
             move |e: Event| t(e)
         };
         fn mods(e: &mut Event, m: &Modifiers) {
-            (e.shift, e.ctrl, e.alt) = (m.shift, m.control, m.alt);
+            (e.shift, e.ctrl, e.alt) = (m.shift, m.control || m.platform, m.alt);
         }
         fn button(b: &MouseButton) -> u32 {
             match b {

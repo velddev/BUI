@@ -13,13 +13,74 @@ pub enum MouseButton {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Modifiers {
     pub shift: bool,
+    /// The Control key (on macOS only the Control key itself, never Command).
     pub control: bool,
     pub alt: bool,
+    /// The platform key, as in gpui: Command on macOS; never set elsewhere.
+    pub platform: bool,
 }
 
 impl Modifiers {
     pub(crate) fn from_kit(mods: i32) -> Modifiers {
-        Modifiers { shift: mods & 1 != 0, control: mods & 2 != 0, alt: mods & 4 != 0 }
+        use blenderui_sys::{BK_ALT, BK_CMD, BK_CONTROL_KEY, BK_CTRL, BK_SHIFT};
+        // Cocoa sets BK_CTRL for Command too; BK_CMD / BK_CONTROL_KEY say which key it was.
+        let mac = mods & (BK_CMD | BK_CONTROL_KEY) != 0;
+        Modifiers {
+            shift: mods & BK_SHIFT != 0,
+            control: if mac { mods & BK_CONTROL_KEY != 0 } else { mods & BK_CTRL != 0 },
+            alt: mods & BK_ALT != 0,
+            platform: mods & BK_CMD != 0,
+        }
+    }
+
+    /// The kit's bits for these keys, as the host would report them.
+    pub(crate) fn to_kit(self) -> i32 {
+        use blenderui_sys::{BK_ALT, BK_CMD, BK_CONTROL_KEY, BK_CTRL, BK_SHIFT};
+        let mut m = 0;
+        if self.shift {
+            m |= BK_SHIFT;
+        }
+        if self.alt {
+            m |= BK_ALT;
+        }
+        if self.platform {
+            m |= BK_CTRL | BK_CMD;
+        }
+        if self.control {
+            m |= BK_CTRL;
+            if self.platform || cfg!(target_os = "macos") {
+                m |= BK_CONTROL_KEY;
+            }
+        }
+        m
+    }
+}
+
+#[cfg(test)]
+mod modifier_tests {
+    use super::Modifiers;
+
+    #[test]
+    fn modifiers_survive_the_kits_bits() {
+        for bits in 0..16u8 {
+            let m = Modifiers { shift: bits & 1 != 0, control: bits & 2 != 0, alt: bits & 4 != 0,
+                                platform: bits & 8 != 0 };
+            assert_eq!(Modifiers::from_kit(m.to_kit()), m);
+        }
+    }
+
+    #[test]
+    fn plain_ctrl_is_control_and_never_the_platform_key() {
+        let m = Modifiers::from_kit(blenderui_sys::BK_CTRL);
+        assert!(m.control && !m.platform);
+    }
+
+    #[test]
+    fn cocoas_command_is_the_platform_key_not_control() {
+        let m = Modifiers::from_kit(blenderui_sys::BK_CTRL | blenderui_sys::BK_CMD);
+        assert!(m.platform && !m.control);
+        let m = Modifiers::from_kit(blenderui_sys::BK_CTRL | blenderui_sys::BK_CONTROL_KEY);
+        assert!(m.control && !m.platform);
     }
 }
 
