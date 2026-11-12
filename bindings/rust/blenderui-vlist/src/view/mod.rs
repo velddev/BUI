@@ -126,6 +126,8 @@ pub struct ListView {
     pub(crate) frames: u32,
     pub(crate) requested: Option<std::ops::Range<usize>>,
     pub(crate) more_to_measure: bool,
+    /// How the scrollbar shows ([`ListView::set_scrollbar`]).
+    pub(crate) bar: crate::scrollbar::Overlay,
 }
 
 impl ListView {
@@ -152,6 +154,7 @@ impl ListView {
             frames: 0,
             requested: None,
             more_to_measure: false,
+            bar: crate::scrollbar::Overlay::default(),
         })
         .map(|mut v| {
             if opts.start_at_end && !opts.stick_to_bottom {
@@ -170,6 +173,17 @@ impl ListView {
             v.scroll_to_end();
         }
         Ok(v)
+    }
+
+    /// How the scrollbar shows from the next paint on (a host fades it).
+    pub const fn set_scrollbar(&mut self, look: crate::scrollbar::Overlay) {
+        self.bar = look;
+    }
+
+    /// How the scrollbar shows.
+    #[must_use]
+    pub const fn scrollbar(&self) -> crate::scrollbar::Overlay {
+        self.bar
     }
 
     #[must_use]

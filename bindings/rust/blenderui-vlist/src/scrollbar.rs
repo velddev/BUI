@@ -4,15 +4,53 @@
 //! anchor from the estimate ([`crate::ListView::scroll_to_fraction`]); as
 //! the items around it are measured the estimate improves but the anchor
 //! stays, so the content under the pointer does not fight the user (only
-//! the thumb adjusts). The look is Blender's slider: a thin rounded thumb
-//! on a darkened track.
+//! the thumb adjusts). The look is an overlay scrollbar's: a thin rounded
+//! pill floating over the content's right edge, no track, as opaque as the
+//! host's [`Overlay`] says (it shows it while the user scrolls and fades it
+//! out after).
 
 use blenderui_paint::{PaintSink, Palette, Rect};
 
-/// Scrollbar width in px.
+/// The scrollbar's lane at the right edge, in px: where a press grabs the
+/// thumb (the thumb itself is thinner, see [`THUMB_W`]).
 pub const WIDTH: f32 = 10.0;
 /// The smallest thumb.
 pub const MIN_THUMB: f32 = 24.0;
+/// The thumb's width at rest, px.
+pub const THUMB_W: f32 = 5.0;
+/// The thumb's width while the pointer is over the lane or drags it, px.
+pub const HOT_THUMB_W: f32 = 8.0;
+/// The thumb's gap to the edge (and to the viewport's top and bottom), px.
+pub const INSET: f32 = 3.0;
+/// The thumb's opacity, the text colour's, at rest.
+pub const ALPHA: f32 = 0.25;
+/// The thumb's opacity while hot.
+pub const HOT_ALPHA: f32 = 0.40;
+
+/// How an overlay scrollbar shows now: its opacity (0: hidden; it scales
+/// [`ALPHA`]) and whether it is hot (the pointer over the lane, or a drag).
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Overlay {
+    pub alpha: f32,
+    pub hot: bool,
+}
+
+impl Default for Overlay {
+    /// Shown: a host that doesn't drive it gets a thumb always there.
+    fn default() -> Self {
+        Self { alpha: 1.0, hot: false }
+    }
+}
+
+/// The overlay thumb's rect for a thumb at `y`, `h` tall in a track along
+/// `x0..x1` (the scroll area's right edge at `x1`) that is `len` long.
+#[must_use]
+pub fn overlay_rect(x1: f32, y: f32, h: f32, len: f32, hot: bool) -> Rect {
+    let w = if hot { HOT_THUMB_W } else { THUMB_W };
+    let y0 = (y + INSET).min(len - INSET);
+    let y1 = (y + h - INSET).max(y0 + 1.0).min(len - INSET).max(y0 + 1.0);
+    Rect::new(x1 - INSET - w, y0, w, y1 - y0)
+}
 
 /// The thumb inside a track.
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -42,10 +80,15 @@ impl Thumb {
         if free <= 0.0 { 0.0 } else { (f64::from(y) / free).clamp(0.0, 1.0) }
     }
 
-    /// Paint the track and thumb at the right edge of a `width` x `height` viewport.
-    pub fn paint(&self, sink: &mut dyn PaintSink, pal: &Palette, width: f32, height: f32) {
-        sink.fill(Rect::new(width - WIDTH, 0.0, WIDTH, height), pal.back.shade(-6.0));
-        sink.round(Rect::new(width - WIDTH + 2.0, self.y + 1.0, WIDTH - 4.0, (self.h - 2.0).max(1.0)), (WIDTH - 4.0) * 0.5, pal.text.opacity(0.35));
+    /// Paint the thumb at the right edge of a `width` x `height` viewport,
+    /// floating over the content (no track), looking as `look` says.
+    pub fn paint(&self, sink: &mut dyn PaintSink, pal: &Palette, width: f32, height: f32, look: Overlay) {
+        if look.alpha <= 0.0 {
+            return;
+        }
+        let r = overlay_rect(width, self.y, self.h, height, look.hot);
+        let a = if look.hot { HOT_ALPHA } else { ALPHA } * look.alpha.min(1.0);
+        sink.round(r, r.w * 0.5, pal.text.opacity(a));
     }
 }
 
@@ -71,5 +114,18 @@ mod tests {
         assert!((t.fraction(t.y, 200.0) - 0.5).abs() < 0.01);
         assert_eq!(t.fraction(-5.0, 200.0), 0.0);
         assert_eq!(t.fraction(1e9, 200.0), 1.0);
+    }
+
+    #[test]
+    fn overlay_thumb_floats_inside_the_edge() {
+        let t = Thumb::new(0.0, 1000.0, 100.0, 200.0).unwrap();
+        let r = overlay_rect(300.0, t.y, t.h, 200.0, false);
+        assert_eq!((r.x, r.y, r.w), (300.0 - INSET - THUMB_W, INSET, THUMB_W));
+        let hot = overlay_rect(300.0, t.y, t.h, 200.0, true);
+        assert_eq!(hot.x + hot.w, r.x + r.w, "it widens inwards");
+        assert_eq!(hot.w, HOT_THUMB_W);
+        let end = Thumb::new(900.0, 1000.0, 100.0, 200.0).unwrap();
+        let r = overlay_rect(300.0, end.y, end.h, 200.0, false);
+        assert!((r.y + r.h - (200.0 - INSET)).abs() < 0.01);
     }
 }

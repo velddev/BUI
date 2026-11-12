@@ -53,7 +53,7 @@ impl ListView {
                 }
             }
             if let Some(t) = thumb {
-                t.paint(s, &pal, w, h);
+                t.paint(s, &pal, w, h, self.bar);
             }
         });
     }

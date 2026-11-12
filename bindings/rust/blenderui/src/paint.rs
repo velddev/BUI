@@ -1729,25 +1729,29 @@ fn paint_gradient(p: &mut Painter, g: &crate::style::Gradient, b: Bounds<f32>) {
     }
 }
 
-/// Overlay scrollbars on scroll containers that overflow.
+/// Overlay scrollbars on scroll containers that overflow: a thin pill over
+/// the right (bottom) edge, no track, as shown as `crate::scrollbar` says.
 fn paint_scrollbars(n: &BoxNode, p: &mut Painter) {
     let (rx, ry) = n.scroll_range;
+    if rx <= 0.0 && ry <= 0.0 {
+        return;
+    }
+    let look = crate::scrollbar::look_of(n.key);
+    if look.alpha <= 0.0 {
+        return;
+    }
     let b = n.bounds;
     let (sx, sy) = n.scroll_pos;
-    let thumb = crate::color::rgba(0x8a8a8aa0);
-    if ry > 0.0 {
-        let h = b.size.height;
-        let th = (h * h / (h + ry)).max(16.0);
-        let ty = b.origin.y + (h - th) * (sy / ry);
-        p.quad(rect(b.origin.x + b.size.width - 6.0, ty + 1.0, 4.0, th - 2.0), 2.0, thumb,
-               Rgba::TRANSPARENT, 0.0);
+    let a = if look.hot { crate::scrollbar::HOT_ALPHA } else { crate::scrollbar::ALPHA } * look.alpha.min(1.0);
+    let t = crate::sink::current_palette().text;
+    let thumb = Rgba { r: t.r, g: t.g, b: t.b, a: t.a * a };
+    if let Some((ty, th)) = crate::scrollbar::thumb(b.size.height, ry, sy) {
+        let r = blenderui_vlist::scrollbar::overlay_rect(b.origin.x + b.size.width, ty, th, b.size.height, look.hot);
+        p.quad(rect(r.x, b.origin.y + r.y, r.w, r.h), r.w * 0.5, thumb, Rgba::TRANSPARENT, 0.0);
     }
-    if rx > 0.0 {
-        let w = b.size.width;
-        let tw = (w * w / (w + rx)).max(16.0);
-        let tx = b.origin.x + (w - tw) * (sx / rx);
-        p.quad(rect(tx + 1.0, b.origin.y + b.size.height - 6.0, tw - 2.0, 4.0), 2.0, thumb,
-               Rgba::TRANSPARENT, 0.0);
+    if let Some((tx, tw)) = crate::scrollbar::thumb(b.size.width, rx, sx) {
+        let r = blenderui_vlist::scrollbar::overlay_rect(b.origin.y + b.size.height, tx, tw, b.size.width, false);
+        p.quad(rect(b.origin.x + r.y, r.x, r.h, r.w), r.w * 0.5, thumb, Rgba::TRANSPARENT, 0.0);
     }
 }
 

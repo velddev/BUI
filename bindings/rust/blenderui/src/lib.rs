@@ -112,6 +112,7 @@ pub(crate) mod sink;
 pub mod vlist;
 pub(crate) mod layout;
 pub mod paint;
+pub mod scrollbar;
 pub mod video;
 pub(crate) mod prof;
 mod selector;

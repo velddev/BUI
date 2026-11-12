@@ -658,6 +658,11 @@ impl App {
             if w.caches.anim.any() {
                 w.dirty = true;
             }
+            // a scrollbar's hold ended (headless windows have no timers)
+            if w.bars_due.is_some_and(|due| due <= w.clock.now()) {
+                w.bars_due = None;
+                w.dirty = true;
+            }
         }
         self.flush();
     }
@@ -776,6 +781,11 @@ unsafe extern "C" fn on_timer(data: *mut c_void, _win: *mut sys::BKWindow, _id: 
         app.drain();
         app.with_window(id, |w, app| {
             w.timer_pending = false;
+            // a scrollbar's hold ended: draw it fading
+            if w.bars_due.is_some_and(|due| due <= w.clock.now() + 0.002) {
+                w.bars_due = None;
+                w.dirty = true;
+            }
             if w.dirty {
                 w.rebuild(app);
             }
@@ -881,6 +891,10 @@ pub struct Window {
     pointer: (f32, f32),
     pressed: Vec<Key>,
     press_button: MouseButton,
+    /// The overlay scrollbars' state (`crate::scrollbar`).
+    bars: crate::scrollbar::Bars,
+    /// When the timer that ends a scrollbar's hold fires (clock seconds).
+    bars_due: Option<f64>,
 }
 
 impl Window {
@@ -937,6 +951,8 @@ impl Window {
                 pointer: (-1.0, -1.0),
                 pressed: Vec::new(),
                 press_button: MouseButton::Left,
+                bars: crate::scrollbar::Bars::default(),
+                bars_due: None,
             };
             if headless {
                 win.scale = sys::BK_scale().max(1.0);
@@ -1155,6 +1171,7 @@ impl Window {
         // the view is moved out while it renders (it gets `&mut Window`)
         let Some(view) = self.view.take() else { return };
         self.dirty = false;
+        self.bars.lists.clear(); // the lists rendered now register again
         let root = {
             let _s = span(Phase::Render);
             crate::hooks::begin(self.id);
@@ -1179,9 +1196,12 @@ impl Window {
         let container_changed = self.caches.after_layout(&frame);
         let p = &mut self.painter;
         p.reset();
+        let (now, reduced) = (self.clock.now(), crate::reduced_motion());
         {
             let _s = span(Phase::Paint);
-            paint_frame(&frame, &self.caches.styles, &mut self.caches.text, p, vp, self.scale, app);
+            crate::scrollbar::with_looks(&self.bars, now, reduced, || {
+                paint_frame(&frame, &self.caches.styles, &mut self.caches.text, p, vp, self.scale, app);
+            });
         }
         {
             let _s = span(Phase::Flush);
@@ -1218,6 +1238,112 @@ impl Window {
         if animating {
             self.request_animation_frame();
         }
+        self.wake_for_bars(now, reduced);
+    }
+
+    // -- overlay scrollbars ------------------------------------------------------------------
+
+    /// The user scrolled the area `key`: show its overlay scrollbar.
+    pub(crate) fn poke_scrollbar(&mut self, key: Key) {
+        self.bars.poke(key, self.clock.now());
+        self.dirty = true;
+    }
+
+    /// A virtual list's scrollbar this frame (`key`: its element's; whether
+    /// its content overflows; whether its thumb is dragged), registered so
+    /// the pointer near its edge shows it.
+    pub(crate) fn list_scrollbar(&mut self, key: Key, overflows: bool, dragged: bool) -> crate::scrollbar::Overlay {
+        self.bars.lists.insert(key, overflows);
+        if !overflows {
+            return crate::scrollbar::Overlay { alpha: 0.0, hot: false };
+        }
+        let now = self.clock.now();
+        if dragged {
+            self.bars.poke(key, now);
+            return crate::scrollbar::Overlay { alpha: 1.0, hot: true };
+        }
+        self.bars.look(key, now, crate::reduced_motion())
+    }
+
+    /// Draw again when the scrollbars need it: the next frame while one
+    /// fades, a timer at the end of a hold, nothing while idle.
+    fn wake_for_bars(&mut self, now: f64, reduced: bool) {
+        match self.bars.wake(now, reduced) {
+            crate::scrollbar::Wake::Idle => {}
+            crate::scrollbar::Wake::Frame => self.request_animation_frame(),
+            crate::scrollbar::Wake::After(s) => {
+                let due = now + s;
+                if self.bars_due.is_some_and(|d| d <= due + 0.001) {
+                    return; // a timer is on its way
+                }
+                self.bars_due = Some(due);
+                if let Some(n) = self.native {
+                    // SAFETY: a live native window; the timer comes back through on_timer.
+                    unsafe { sys::BK_window_timer(n, (s * 1000.0).ceil() as c_int + 1) };
+                }
+            }
+        }
+    }
+
+    /// The scroll area whose right edge the pointer at (`x`, `y`) is near,
+    /// innermost first, and whether it is over the thumb's lane.
+    fn bar_under(&self, x: f32, y: f32) -> Option<(Key, bool)> {
+        let f = self.frame.as_ref()?;
+        for key in self.path_at(x, y).iter().rev() {
+            let Some(&i) = f.by_key().get(key) else { continue };
+            let n = &f.nodes[i];
+            if n.scroll_range.1 <= 0.0 && self.bars.lists.get(key) != Some(&true) {
+                continue;
+            }
+            let right = n.bounds.origin.x + n.bounds.size.width;
+            if x >= right - crate::scrollbar::NEAR && x < right {
+                return Some((*key, x >= right - crate::scrollbar::LANE));
+            }
+        }
+        None
+    }
+
+    /// The pointer moved: show the scrollbar it is near.
+    fn hover_bars(&mut self) {
+        let (x, y) = self.pointer;
+        let under = if x < 0.0 { None } else { self.bar_under(x, y) };
+        if self.bars.set_hover(under, self.clock.now()) {
+            self.dirty = true;
+        }
+    }
+
+    /// A press on a scroll container's thumb grabs it (true: the press is
+    /// the scrollbar's).
+    fn grab_bar(&mut self, y: f32) -> bool {
+        let Some((key, true)) = self.bars.hover else { return false };
+        let Some(f) = &self.frame else { return false };
+        let Some(&i) = f.by_key().get(&key) else { return false };
+        let n = &f.nodes[i];
+        let Some((ty, th)) = crate::scrollbar::thumb(n.bounds.size.height, n.scroll_range.1, n.scroll_pos.1) else {
+            return false; // a virtual list's: it grabs its own
+        };
+        let top = n.bounds.origin.y + ty;
+        if y < top || y >= top + th {
+            return false;
+        }
+        self.bars.drag = Some((key, y - top));
+        self.poke_scrollbar(key);
+        true
+    }
+
+    /// The dragged thumb follows the pointer.
+    fn drag_bar(&mut self, y: f32) {
+        let (Some((key, grab)), Some(f)) = (self.bars.drag, &self.frame) else { return };
+        let Some(&i) = f.by_key().get(&key) else { return };
+        let n = &f.nodes[i];
+        let (view, range) = (n.bounds.size.height, n.scroll_range.1);
+        let Some((_, th)) = crate::scrollbar::thumb(view, range, n.scroll_pos.1) else { return };
+        let free = (view - th).max(1.0);
+        let sy = ((y - grab - n.bounds.origin.y) / free).clamp(0.0, 1.0) * range;
+        if (sy - n.scroll_pos.1).abs() > f32::EPSILON {
+            self.state.scroll.insert(key, (n.scroll_pos.0, sy));
+        }
+        self.poke_scrollbar(key);
     }
 
     // -- events ------------------------------------------------------------------------------
@@ -1333,6 +1459,11 @@ impl Window {
             }
             sys::BK_EV_MOTION | sys::BK_EV_ENTER => {
                 self.pointer = (x, y);
+                if self.bars.drag.is_some() {
+                    self.drag_bar(y);
+                    return;
+                }
+                self.hover_bars();
                 self.update_hover(app, true);
                 let (modifiers, _) = self.pointer_event(&ev.text);
                 let pressed = (!self.pressed.is_empty()).then_some(self.press_button);
@@ -1343,11 +1474,17 @@ impl Window {
             }
             sys::BK_EV_LEAVE => {
                 self.pointer = (-1.0, -1.0);
+                if self.bars.drag.is_none() {
+                    self.hover_bars();
+                }
                 self.update_hover(app, true);
             }
             sys::BK_EV_PRESS | sys::BK_EV_DOUBLE => {
                 self.pointer = (x, y);
                 let (modifiers, button) = self.pointer_event(&ev.text);
+                if button == MouseButton::Left && self.grab_bar(y) {
+                    return;
+                }
                 let path = self.path_at(x, y);
                 self.press_button = button;
                 self.state.active = path.iter().copied().collect();
@@ -1363,6 +1500,12 @@ impl Window {
             }
             sys::BK_EV_RELEASE => {
                 let (modifiers, button) = self.pointer_event(&ev.text);
+                if let Some((key, _)) = self.bars.drag.take() {
+                    self.poke_scrollbar(key);
+                    self.pointer = (x, y);
+                    self.hover_bars();
+                    return;
+                }
                 let path = self.path_at(x, y);
                 let up = MouseUpEvent { button, position: point(px(x), px(y)), modifiers };
                 if let Some(&deepest) = path.last() {
@@ -1451,6 +1594,8 @@ impl Window {
             if (nx, ny) != (sx, sy) {
                 self.state.scroll.insert(*key, (nx, ny));
                 self.dirty = true;
+                let key = *key;
+                self.poke_scrollbar(key);
                 return;
             }
         }

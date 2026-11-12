@@ -425,3 +425,43 @@ fn focus_id_gives_a_textarea_the_kit_focus_back() {
         assert_eq!(caret(cx), Some(TextCaret::at(1)));
     });
 }
+
+struct Scroller;
+
+impl Render for Scroller {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        body().m_0().bg(rgb(0x000000)).child(
+            div().id("scroller").w(px(100.0)).h(px(100.0)).overflow_y_scroll().bg(rgb(0x000000))
+                .child(div().w(px(100.0)).h(px(400.0))),
+        )
+    }
+}
+
+#[test]
+fn overlay_scrollbars_show_while_scrolling_then_fade() {
+    Application::headless().run(|cx| {
+        let win = open(cx, 200.0, 100.0, Scroller);
+        let id = win.id;
+        let lane = |cx: &mut App| {
+            let img = cx.draw(id);
+            let s = img.0 as f32 / 200.0;
+            // the thumb's middle: 3px in from the edge, 5px wide; it takes no layout width
+            (10..90).map(|y| pixel(&img, (94.5 * s) as usize, (y as f32 * s) as usize)).find(|&p| p != 0)
+        };
+        assert_eq!(cx.element_bounds(id, "scroller").unwrap().size.width, 100.0);
+        assert_eq!(lane(cx), None, "hidden until scrolled");
+        cx.simulate_scroll(id, 50.0, 50.0, -1);
+        assert!(lane(cx).is_some(), "shown while scrolling");
+        cx.advance_clock(std::time::Duration::from_millis(700));
+        assert!(lane(cx).is_some(), "held");
+        cx.advance_clock(std::time::Duration::from_millis(400));
+        assert_eq!(lane(cx), None, "faded out");
+        cx.simulate_mouse_move(id, 97.0, 50.0);
+        assert!(lane(cx).is_some(), "the pointer near the edge shows it");
+        cx.advance_clock(std::time::Duration::from_millis(5000));
+        assert!(lane(cx).is_some(), "and holds it while it rests there");
+        cx.simulate_mouse_move(id, 150.0, 50.0);
+        cx.advance_clock(std::time::Duration::from_millis(1100));
+        assert_eq!(lane(cx), None, "gone a hold after it leaves");
+    });
+}

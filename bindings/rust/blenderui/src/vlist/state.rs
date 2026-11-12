@@ -67,6 +67,9 @@ impl<S: ItemSource, P: Measurer + ItemPainter> ListState<S, P> {
         if (self.list.view.viewport().0 - w).abs() > f32::EPSILON || (self.list.view.viewport().1 - h).abs() > f32::EPSILON {
             self.list.resize(w, h);
         }
+        // the overlay scrollbar: shown while scrolled, dragged or pointed at, faded after
+        let look = window.list_scrollbar(crate::layout::id_key(&self.id), self.list.thumb().is_some(), self.list.dragging());
+        self.list.view.set_scrollbar(look);
         let now = Instant::now();
         let dt = self.last_frame.replace(now).map_or(1.0 / 60.0, |t| now.duration_since(t).as_secs_f64().min(0.1));
         let mut more = self.list.view.tick(dt);
@@ -82,6 +85,11 @@ impl<S: ItemSource, P: Measurer + ItemPainter> ListState<S, P> {
             self.last_frame = None;
         }
         more
+    }
+
+    /// The list element's key (its overlay scrollbar's).
+    pub(crate) fn bar_key(&self) -> crate::layout::Key {
+        crate::layout::id_key(&self.id)
     }
 
     /// What the list shows now.

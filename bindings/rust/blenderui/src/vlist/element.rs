@@ -95,7 +95,9 @@ impl<S: ItemSource, P: Measurer + ItemPainter> IntoElement for VariableList<S, P
                         return;
                     }
                     let local = |s: &ListState<S, P>| (e.position.x.0 - s.bounds.origin.x, e.position.y.0 - s.bounds.origin.y);
-                    state_pointer_down(down, click.as_ref(), local, cx);
+                    if state_pointer_down(down, click.as_ref(), local, cx) == Hit::Scrollbar {
+                        w.poke_scrollbar(down.read(cx).bar_key());
+                    }
                     w.refresh();
                 })
                 .on_mouse_move(move |e, w, cx| {
@@ -114,16 +116,19 @@ impl<S: ItemSource, P: Measurer + ItemPainter> IntoElement for VariableList<S, P
                 })
                 .on_mouse_up(MouseButton::Left, move |_, _, cx| up.update(cx, |s, _| s.pointer_up()))
                 .on_scroll_wheel(move |e, w, cx| {
-                    wh.update(cx, |s, _| {
+                    let key = wh.update(cx, |s, _| {
                         // Blender's wheel scrolls at once, a notch or a touchpad fraction alike: no easing
                         let lines = f64::from(e.delta);
                         s.view.wheel(-lines * WHEEL_NOTCH_PX, true);
+                        s.bar_key()
                     });
+                    w.poke_scrollbar(key);
                     w.request_animation_frame();
                 })
                 .on_key_down(move |e, w, cx| {
-                    let handled = key.update(cx, |s, _| s.key(&e.keystroke.key, LINE_PX));
+                    let (handled, k) = key.update(cx, |s, _| (s.key(&e.keystroke.key, LINE_PX), s.bar_key()));
                     if handled {
+                        w.poke_scrollbar(k);
                         w.request_animation_frame();
                     }
                 })
@@ -149,13 +154,15 @@ fn state_pointer_down<S: ItemSource, P: Measurer + ItemPainter>(
     click: Option<&Listener<S, P>>,
     local: impl Fn(&ListState<S, P>) -> (f32, f32),
     cx: &mut App,
-) {
+) -> Hit {
     state.update(cx, |s, _| {
         let (x, y) = local(s);
-        if let Hit::Item(i) = s.pointer_down(x, y) {
+        let hit = s.pointer_down(x, y);
+        if let Hit::Item(i) = hit {
             if let Some(f) = click {
                 f(i, s);
             }
         }
-    });
+        hit
+    })
 }
