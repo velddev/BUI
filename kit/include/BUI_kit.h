@@ -124,7 +124,12 @@ enum {
   BK_EV_VIEW,   /* scrolled view changed (nodes with "viewevents") */
   BK_EV_SCROLL, /* scrollbar request: a = 0 moveto (b = fraction), 1 units, 2 pages (b = count) */
   BK_EV_CONFIGURE, /* geometry changed ("events" nodes): a = width, b = height */
-  BK_EV_KEYRELEASE /* ref = "\tkeysym", a = mods */
+  BK_EV_KEYRELEASE, /* ref = "\tkeysym", a = mods */
+  /* A third (or later) click in a row on a node that selects more on it (a text box selects
+   * its line): ref = NULL, a, b = position relative to the node. A node with "events" gets
+   * BK_EV_PRESS instead, its ref "state button clicks" (clicks 3 and on: a third
+   * field only then, so "state button" parsers still read it). */
+  BK_EV_TRIPLE
 };
 
 typedef struct BKHost {

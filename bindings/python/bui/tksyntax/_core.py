@@ -1857,7 +1857,9 @@ class BaseWidget(Misc):
                          keysym_num=ord(char) if len(char) == 1 else 0,
                          keycode=ord(keysym.upper()) if len(keysym) == 1 else 0,
                          state=_kit_mods_to_state(int(a)), x=0, y=0)
-        mods, _, num = (ref or "0 1").partition(" ")
+        # "state button", then from a third click in a row on the presses' count
+        parts = (ref or "").split()
+        mods, num = (parts[0] if parts else "0"), (parts[1] if len(parts) > 1 else "1")
         state = _kit_mods_to_state(int(mods or 0))
         if kind == EV_WHEEL:
             return Event(type=EventType.MouseWheel, widget=self, delta=int(a) * 120,

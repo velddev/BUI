@@ -49,6 +49,7 @@ pub const BK_EV_VIEW: c_int = 17;
 pub const BK_EV_SCROLL: c_int = 18;
 pub const BK_EV_CONFIGURE: c_int = 19;
 pub const BK_EV_KEYRELEASE: c_int = 20;
+pub const BK_EV_TRIPLE: c_int = 21;
 
 // Modifier bits for input calls.
 pub const BK_SHIFT: c_int = 1;

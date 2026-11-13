@@ -424,6 +424,24 @@ static int ta_dbl(BKNode *n, BKEvent *e)
   return 1;
 }
 
+/* A third click selects the line (from one newline to the next, without them), as editors do. */
+static int ta_triple(BKNode *n, BKEvent *e)
+{
+  TAData *t = TA(n);
+  const int at = offset_at(n, e->x, e->y);
+  int a = at, b = at;
+  while (a > 0 && t->text[a - 1] != '\n') {
+    a--;
+  }
+  while (b < t->len && t->text[b] != '\n') {
+    b++;
+  }
+  t->anchor = a;
+  t->caret = b;
+  bk_invalidate(n);
+  return 1;
+}
+
 static int ta_drag(BKNode *n, BKEvent *e)
 {
   TAData *t = TA(n);
@@ -642,6 +660,7 @@ static void draw_caret_line(BKNode *n, int a, int b, float x, const BKRect *line
   }
 TA_SCALED(ta_press_s, ta_press)
 TA_SCALED(ta_dbl_s, ta_dbl)
+TA_SCALED(ta_triple_s, ta_triple)
 TA_SCALED(ta_drag_s, ta_drag)
 TA_SCALED(ta_key_s, ta_key)
 
@@ -860,6 +879,7 @@ const BKClass bk_cls_textarea = {.name = "textarea",
                                  .draw = ta_draw,
                                  .press = ta_press_s,
                                  .dbl = ta_dbl_s,
+                                 .triple = ta_triple_s,
                                  .drag = ta_drag_s,
                                  .wheel = ta_wheel,
                                  .key = ta_key_s,

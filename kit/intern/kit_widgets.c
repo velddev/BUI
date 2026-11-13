@@ -2405,6 +2405,18 @@ static int text_dbl(BKNode *n, BKEvent *e)
   return 1;
 }
 
+/* A third click selects the whole field (its one line), as editors do. */
+static int text_triple(BKNode *n, BKEvent *e)
+{
+  if (!n->edit) {
+    return text_press(n, e);
+  }
+  n->edit->anchor = 0;
+  n->edit->caret = n->edit->len;
+  bk_invalidate(n);
+  return 1;
+}
+
 static int text_drag(BKNode *n, BKEvent *e)
 {
   if (n->edit) {
@@ -2519,7 +2531,7 @@ static void text_draw(BKNode *n)
 
 #define TEXT_CLASS_COMMON \
   .flags = CLS_INTERACTIVE | CLS_VALUE, .cursor = BK_CURSOR_TEXT, .measure = text_measure, \
-  .draw = text_draw, .press = text_press, .dbl = text_dbl, .drag = text_drag, \
+  .draw = text_draw, .press = text_press, .dbl = text_dbl, .triple = text_triple, .drag = text_drag, \
   .key = text_key, .cursor_at = text_cursor_at, .finish_edit = text_finish, \
   .to_text = text_to_text, .from_text = text_from_text, .reset = text_reset, \
   .activate = text_activate

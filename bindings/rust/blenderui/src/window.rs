@@ -1673,8 +1673,10 @@ impl Window {
                 self.set_focus(&path);
                 self.pressed = path.clone();
                 self.dirty = true;
-                let e = MouseDownEvent { button, position: point(px(x), px(y)), modifiers,
-                                         click_count: if ev.kind == sys::BK_EV_DOUBLE { 2 } else { 1 } };
+                // the kit's count of presses in a row (3 and on: a triple click), else 1 or 2
+                let clicks = ev.text.split_whitespace().nth(2).and_then(|c| c.parse().ok());
+                let click_count = clicks.unwrap_or(if ev.kind == sys::BK_EV_DOUBLE { 2 } else { 1 });
+                let e = MouseDownEvent { button, position: point(px(x), px(y)), modifiers, click_count };
                 if let Some(&deepest) = path.last() {
                     self.emit(app, deepest, &e, |l| l.mouse_down.iter()
                         .filter(|(b, _)| b.is_none_or(|b| b == button)).map(|(_, f)| f).collect());
@@ -1811,6 +1813,16 @@ impl Window {
                 if input || change {
                     self.widgets.edited(key);
                 }
+                self.dirty = true;
+            }
+            // a third click on a text box (it selected its line): its mouse-down listeners
+            // hear it, `click_count` 3
+            sys::BK_EV_TRIPLE => {
+                let (x, y) = self.pointer;
+                let e = MouseDownEvent { button: MouseButton::Left, position: point(px(x), px(y)),
+                                         modifiers: Modifiers::default(), click_count: 3 };
+                self.emit(app, key, &e, |l| l.mouse_down.iter()
+                    .filter(|(b, _)| b.is_none_or(|b| b == MouseButton::Left)).map(|(_, f)| f).collect());
                 self.dirty = true;
             }
             sys::BK_EV_CLICK => {

@@ -2588,10 +2588,18 @@ static int in_BK_press(BKContext *ctx, int x, int y, int mods)
   bk_invalidate(target);
   BKEvent e = make_event(ctx, target, x, y, mods);
   const double now = bk_time();
-  if (ctx->last_click_node == target && now - ctx->last_click_t < DOUBLE_CLICK_S &&
-      abs(x - ctx->last_click_x) <= DOUBLE_CLICK_PX && abs(y - ctx->last_click_y) <= DOUBLE_CLICK_PX)
-  {
-    ctx->last_click_node = NULL;
+  const bool again = ctx->last_click_node == target && now - ctx->last_click_t < DOUBLE_CLICK_S &&
+                     abs(x - ctx->last_click_x) <= DOUBLE_CLICK_PX &&
+                     abs(y - ctx->last_click_y) <= DOUBLE_CLICK_PX;
+  /* a node that takes a third click (a text box's line, an "events" node's count) counts on;
+   * on any other a third click starts over */
+  const bool counts = target->cls->triple || (target->flags & NF_EVENTS);
+  ctx->clicks = again && (ctx->clicks < 2 || counts) ? ctx->clicks + 1 : 1;
+  ctx->last_click_t = now;
+  ctx->last_click_node = target;
+  ctx->last_click_x = x;
+  ctx->last_click_y = y;
+  if (ctx->clicks == 2) {
     bk_event(target, BK_EV_DOUBLE, mods, &e);
     if (target->cls->dbl) {
       target->cls->dbl(target, &e);
@@ -2600,11 +2608,12 @@ static int in_BK_press(BKContext *ctx, int x, int y, int mods)
       target->cls->press(target, &e);
     }
   }
+  else if (ctx->clicks >= 3 && target->cls->triple) {
+    bk_event(target, BK_EV_PRESS, mods, &e);
+    target->cls->triple(target, &e);
+    bk_emit(target, BK_EV_TRIPLE, NULL, e.x - target->x, e.y - target->y);
+  }
   else {
-    ctx->last_click_t = now;
-    ctx->last_click_node = target;
-    ctx->last_click_x = x;
-    ctx->last_click_y = y;
     bk_event(target, BK_EV_PRESS, mods, &e);
     if (target->cls->press) {
       target->cls->press(target, &e);
@@ -3476,7 +3485,13 @@ static void raw_event(BKNode *n, int kind, int mods, const BKEvent *e, int butto
     bk_emit(n, kind, buf, mods, 0);
     return;
   }
-  snprintf(buf, sizeof(buf), "%d %d", mods, button);
+  BKContext *ctx = bk_ctx(n);
+  if (kind == BK_EV_PRESS && button == 1 && ctx && ctx->clicks > 2) {
+    snprintf(buf, sizeof(buf), "%d %d %d", mods, button, ctx->clicks);
+  }
+  else {
+    snprintf(buf, sizeof(buf), "%d %d", mods, button);
+  }
   if (kind == BK_EV_WHEEL && e) {
     bk_emit(n, kind, buf, e->delta, 0);
     return;

@@ -589,3 +589,54 @@ fn overlay_scrollbars_show_while_scrolling_then_fade() {
         assert_eq!(lane(cx), None, "gone a hold after it leaves");
     });
 }
+
+/// A text box and a plain box, noting each mouse-down's click count.
+struct Triple {
+    downs: std::rc::Rc<std::cell::RefCell<Vec<(&'static str, usize)>>>,
+}
+
+impl Render for Triple {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let (a, b) = (self.downs.clone(), self.downs.clone());
+        div().styled().id("root").size_full()
+            .child(textarea().id("box").attr("rows", "4").value("one two\nthree four\nfive")
+                .on_mouse_down(MouseButton::Left, move |e, _, _| a.borrow_mut().push(("box", e.click_count))))
+            .child(div().id("pad").w(px(100.0)).h(px(40.0))
+                .on_mouse_down(MouseButton::Left, move |e, _, _| b.borrow_mut().push(("pad", e.click_count))))
+    }
+}
+
+#[test]
+fn a_triple_click_selects_a_text_box_line_and_counts_on() {
+    Application::headless().run(|cx| {
+        let downs = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let win = open(cx, 400.0, 600.0, Triple { downs: downs.clone() });
+        let id = win.id;
+        cx.draw(id);
+        let caret = |cx: &mut App| win.update(cx, |_, w, _| w.textarea_caret("box")).unwrap();
+        let b = cx.element_bounds(id, "box").unwrap();
+        // on the first line ("one two"), a little in
+        let (x, y) = (b.origin.x + 8.0, b.origin.y + 6.0);
+        let pause = || std::thread::sleep(std::time::Duration::from_millis(400));
+        cx.simulate_click(id, x, y);
+        cx.simulate_click(id, x, y);
+        assert_eq!(caret(cx), Some(TextCaret { anchor: 0, caret: 3 }), "a double click: the word");
+        cx.simulate_click(id, x, y);
+        assert_eq!(caret(cx), Some(TextCaret { anchor: 0, caret: 7 }), "a triple click: the line, no newline");
+        cx.simulate_click(id, x, y);
+        assert_eq!(caret(cx), Some(TextCaret { anchor: 0, caret: 7 }), "a fourth keeps it");
+        assert_eq!(*downs.borrow(), [("box", 3), ("box", 3)], "the box hears its triple clicks only");
+        downs.borrow_mut().clear();
+        pause();
+        cx.simulate_click(id, x, y);
+        assert_eq!(caret(cx).map(|c| c.anchor == c.caret), Some(true), "after a pause, a first click again");
+        // a plain box hears every press's count, on past two
+        pause();
+        let p = cx.element_bounds(id, "pad").unwrap();
+        let (x, y) = (p.origin.x + 10.0, p.origin.y + 10.0);
+        for _ in 0..4 {
+            cx.simulate_click(id, x, y);
+        }
+        assert_eq!(*downs.borrow(), [("pad", 1), ("pad", 2), ("pad", 3), ("pad", 4)]);
+    });
+}

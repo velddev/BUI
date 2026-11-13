@@ -300,6 +300,8 @@ typedef struct BKClass {
   BKNode *(*hit)(BKNode *n, int x, int y);
   int (*press)(BKNode *n, BKEvent *e);
   int (*dbl)(BKNode *n, BKEvent *e);
+  /* optional: a third click in a row (and each one after it; else it is a new first click) */
+  int (*triple)(BKNode *n, BKEvent *e);
   int (*drag)(BKNode *n, BKEvent *e);
   int (*release)(BKNode *n, BKEvent *e);
   void (*cancel)(BKNode *n); /* Escape while dragged: restore the value */
@@ -564,6 +566,7 @@ struct BKContext {
   double last_click_t;
   BKNode *last_click_node;
   int last_click_x, last_click_y;
+  int clicks; /* the presses in a row on last_click_node, this one included */
   int cursor;
   /* window / region */
   int win_w, win_h, scroll, content_h, header_h;
