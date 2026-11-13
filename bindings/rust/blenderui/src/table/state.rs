@@ -134,6 +134,7 @@ impl<D: TableDelegate> TableState<D> {
             MouseButton::Left => Button::Left,
             MouseButton::Right => Button::Right,
             MouseButton::Middle => Button::Middle,
+            MouseButton::Back | MouseButton::Forward => return, // the window's navigation
         };
         let p = self.local(pos);
         self.core.pointer_down(p, b, mods(m), clicks, window, cx);

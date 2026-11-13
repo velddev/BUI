@@ -627,6 +627,10 @@ static void handle_event(XEvent *ev)
         case 7:
           BK_scroll(ctx, b->x, b->y, b->button == 6 ? -1.0f : 1.0f, 0.0f, mods & ~BK_BUTTON1);
           break;
+        case 8: /* the side buttons: back, forward */
+        case 9:
+          BK_button(ctx, b->x, b->y, (int)b->button, 0, mods & ~BK_BUTTON1);
+          break;
       }
       break;
     }
@@ -638,6 +642,9 @@ static void handle_event(XEvent *ev)
       }
       else if (b->button == Button2 || b->button == Button3) {
         BK_button(ctx, b->x, b->y, (int)b->button == Button2 ? 2 : 3, 1, mods);
+      }
+      else if (b->button == 8 || b->button == 9) {
+        BK_button(ctx, b->x, b->y, (int)b->button, 1, mods);
       }
       break;
     }

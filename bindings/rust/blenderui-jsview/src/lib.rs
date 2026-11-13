@@ -295,6 +295,8 @@ impl JsView {
                 MouseButton::Left => 0,
                 MouseButton::Middle => 1,
                 MouseButton::Right => 2,
+                MouseButton::Back => 3,
+                MouseButton::Forward => 4,
             }
         }
         // The deepest listening node gets the event, and native propagation

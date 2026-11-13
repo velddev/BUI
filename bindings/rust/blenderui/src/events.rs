@@ -7,6 +7,11 @@ pub enum MouseButton {
     Left,
     Right,
     Middle,
+    /// The mouse's back (side) button. Only listeners for this button hear it, never
+    /// `on_any_mouse_down`: it is a window's navigation, not a press on what is under it.
+    Back,
+    /// The mouse's forward (side) button, heard as `Back` is.
+    Forward,
 }
 
 /// Modifier keys held during an event.

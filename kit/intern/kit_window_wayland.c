@@ -520,7 +520,15 @@ static void pointer_motion(void *d, struct wl_pointer *p, uint32_t time, wl_fixe
   }
 }
 
-enum { EVDEV_BTN_LEFT = 0x110, EVDEV_BTN_RIGHT = 0x111, EVDEV_BTN_MIDDLE = 0x112 };
+enum {
+  EVDEV_BTN_LEFT = 0x110,
+  EVDEV_BTN_RIGHT = 0x111,
+  EVDEV_BTN_MIDDLE = 0x112,
+  EVDEV_BTN_SIDE = 0x113, /* back on most mice */
+  EVDEV_BTN_EXTRA = 0x114, /* forward on most mice */
+  EVDEV_BTN_FORWARD = 0x115,
+  EVDEV_BTN_BACK = 0x116,
+};
 
 static void pointer_button(void *d, struct wl_pointer *p, uint32_t serial, uint32_t time,
                            uint32_t button, uint32_t state)
@@ -548,6 +556,12 @@ static void pointer_button(void *d, struct wl_pointer *p, uint32_t serial, uint3
   else if (button == EVDEV_BTN_RIGHT || button == EVDEV_BTN_MIDDLE) { /* as the X11 host */
     BK_button(win->ctx, x, y, button == EVDEV_BTN_MIDDLE ? 2 : 3, down ? 0 : 1,
               mods_now() & ~BK_BUTTON1);
+  }
+  else if (button == EVDEV_BTN_SIDE || button == EVDEV_BTN_BACK) {
+    BK_button(win->ctx, x, y, BK_BUTTON_BACK, down ? 0 : 1, mods_now() & ~BK_BUTTON1);
+  }
+  else if (button == EVDEV_BTN_EXTRA || button == EVDEV_BTN_FORWARD) {
+    BK_button(win->ctx, x, y, BK_BUTTON_FORWARD, down ? 0 : 1, mods_now() & ~BK_BUTTON1);
   }
 }
 

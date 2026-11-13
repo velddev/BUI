@@ -638,6 +638,10 @@ int BK_ime_composing(BKContext *ctx);
  * forwarded to "events" nodes, no widget behavior. */
 int BK_key_release(BKContext *ctx, const char *keysym, int mods);
 int BK_button(BKContext *ctx, int x, int y, int button, int release, int mods);
+/* BK_button's numbers for the mouse's back and forward (side) buttons, as X11 numbers them. They
+ * go to the "events" node under the pointer or holding what is (a text box inside a canvas), so
+ * a window hears them wherever the pointer is. */
+enum { BK_BUTTON_BACK = 8, BK_BUTTON_FORWARD = 9 };
 /* Capture the pointer for an "events" node (NULL lets it go): while set, every motion, press,
  * middle release, wheel step and Escape goes to it alone, wherever the pointer is (over a text
  * box too): a browser-style middle-button autoscroll. Released when the node is removed. */

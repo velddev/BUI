@@ -60,6 +60,9 @@ pub const BK_BUTTON1: c_int = 8;
 pub const BK_CMD: c_int = 64;
 /// macOS's Control key itself; set together with `BK_CTRL`, so Control and Command differ.
 pub const BK_CONTROL_KEY: c_int = 128;
+/// `BK_button`'s numbers for the mouse's back and forward (side) buttons.
+pub const BK_BUTTON_BACK: c_int = 8;
+pub const BK_BUTTON_FORWARD: c_int = 9;
 
 // Geometry managers and anchors.
 pub const BK_GEOM_NONE: c_int = 0;

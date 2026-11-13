@@ -773,3 +773,49 @@ fn activation_re_renders_with_the_focus_state() {
         assert_eq!(cx.window(id).unwrap().is_active(), Some(true));
     });
 }
+
+/// A text box and a plain box; the root notes back and forward presses and releases, the box
+/// any press.
+struct Nav {
+    heard: std::rc::Rc<std::cell::RefCell<Vec<&'static str>>>,
+}
+
+impl Render for Nav {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let h = |s: &'static str| {
+            let heard = self.heard.clone();
+            move || heard.borrow_mut().push(s)
+        };
+        let (a, b, c, d, e) = (h("back"), h("forward"), h("back up"), h("forward up"), h("any"));
+        div().styled().id("root").size_full()
+            .on_mouse_down(MouseButton::Back, move |_, _, _| a())
+            .on_mouse_down(MouseButton::Forward, move |_, _, _| b())
+            .on_mouse_up(MouseButton::Back, move |_, _, _| c())
+            .on_mouse_up(MouseButton::Forward, move |_, _, _| d())
+            .child(textarea().id("box").attr("rows", "2").value("text"))
+            .child(div().id("pad").w(px(100.0)).h(px(40.0))
+                .on_any_mouse_down(move |_, _, _| e()))
+    }
+}
+
+#[test]
+fn back_and_forward_buttons_reach_the_window_wherever_the_pointer_is() {
+    Application::headless().run(|cx| {
+        let heard = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let win = open(cx, 400.0, 300.0, Nav { heard: heard.clone() });
+        let id = win.id;
+        cx.draw(id);
+        let b = cx.element_bounds(id, "box").unwrap();
+        let p = cx.element_bounds(id, "pad").unwrap();
+        let r = cx.element_bounds(id, "root").unwrap();
+        let free = (r.origin.x + r.size.width - 10.0, p.origin.y + 10.0); // beside the pad
+        for (x, y) in [(b.origin.x + 8.0, b.origin.y + 6.0), (p.origin.x + 10.0, p.origin.y + 10.0), free] {
+            cx.simulate_navigate(id, x, y, false, true);
+            cx.simulate_navigate(id, x, y, false, false);
+            cx.simulate_navigate(id, x, y, true, true);
+            cx.simulate_navigate(id, x, y, true, false);
+            assert_eq!(*heard.borrow(), ["back", "back up", "forward", "forward up"], "at {x},{y}");
+            heard.borrow_mut().clear();
+        }
+    });
+}

@@ -3503,6 +3503,18 @@ int BK_button(BKContext *ctx, int x, int y, int button, int release, int mods)
     }
   }
   BKNode *under = hit_all(ctx, x, y);
+  if (button == BK_BUTTON_BACK || button == BK_BUTTON_FORWARD) {
+    /* the window's buttons: the events node holding what is under the pointer, else the
+     * main tree's (over a kit popup or header) */
+    while (under && !(under->flags & NF_EVENTS)) {
+      under = under->parent;
+    }
+    if (!under && ctx->root && bk_contains(ctx->root, x, y)) {
+      for (under = bk_hit(ctx->root, x, y); under && !(under->flags & NF_EVENTS);) {
+        under = under->parent;
+      }
+    }
+  }
   if (!under || !(under->flags & NF_EVENTS)) {
     return 0;
   }

@@ -761,6 +761,16 @@ impl App {
         });
     }
 
+    /// Press (`down`) or release the mouse's back (`forward` false) or forward button at
+    /// (x, y), as a host does (the pointer moves there first).
+    pub fn simulate_navigate(&mut self, window: WindowId, x: f32, y: f32, forward: bool, down: bool) {
+        self.simulate_mouse_move(window, x, y);
+        let button = if forward { sys::BK_BUTTON_FORWARD } else { sys::BK_BUTTON_BACK };
+        self.input(window, |ctx, s| unsafe {
+            sys::BK_button(ctx, (x * s) as c_int, (y * s) as c_int, button, c_int::from(!down), 0);
+        });
+    }
+
     /// Click at (x, y) with modifier keys held (`ctrl`, `shift`).
     pub fn simulate_click_with(&mut self, window: WindowId, x: f32, y: f32, ctrl: bool, shift: bool) {
         let mods = c_int::from(shift) | (c_int::from(ctrl) << 1);
@@ -1833,6 +1843,8 @@ impl Window {
         let button = match it.next().unwrap_or(1) {
             2 => MouseButton::Middle,
             3 => MouseButton::Right,
+            8 => MouseButton::Back,
+            9 => MouseButton::Forward,
             _ => MouseButton::Left,
         };
         (Modifiers::from_kit(mods), button)
@@ -1926,6 +1938,9 @@ impl Window {
                     return;
                 }
                 self.pointer = (x, y);
+                if self.navigate(app, button, x, y, modifiers, true) {
+                    return;
+                }
                 if button == MouseButton::Middle && self.start_autoscroll(x, y) {
                     return;
                 }
@@ -1961,6 +1976,9 @@ impl Window {
                     } else {
                         a.sticky = true;
                     }
+                    return;
+                }
+                if self.navigate(app, button, x, y, modifiers, false) {
                     return;
                 }
                 if let Some((key, _)) = self.bars.drag.take() {
@@ -2026,6 +2044,29 @@ impl Window {
             }
             _ => {}
         }
+    }
+
+    /// The back and forward buttons (true: `button` is one): their listeners along the path
+    /// under the pointer hear the press or release, and nothing else happens (no focus, no
+    /// active state, no click).
+    fn navigate(&mut self, app: &mut App, button: MouseButton, x: f32, y: f32,
+                modifiers: Modifiers, down: bool) -> bool {
+        if !matches!(button, MouseButton::Back | MouseButton::Forward) {
+            return false;
+        }
+        let Some(&deepest) = self.path_at(x, y).last() else { return true };
+        let position = point(px(x), px(y));
+        if down {
+            self.hush_tooltip();
+            let e = MouseDownEvent { button, position, modifiers, click_count: 1 };
+            self.emit(app, deepest, &e, |l| l.mouse_down.iter()
+                .filter(|(b, _)| *b == Some(button)).map(|(_, f)| f).collect());
+        } else {
+            let e = MouseUpEvent { button, position, modifiers };
+            self.emit(app, deepest, &e, |l| l.mouse_up.iter()
+                .filter(|(b, _)| *b == Some(button)).map(|(_, f)| f).collect());
+        }
+        true
     }
 
     fn state_deepest(&self) -> Option<Key> {

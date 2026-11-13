@@ -436,25 +436,41 @@ static CGColorSpaceRef srgb(void)
   BK_button(bk->ctx, x, y, 3, 1, mods_of([ev modifierFlags]) & ~BK_BUTTON1);
 }
 
-/* GHOST convertButton: buttonNumber 2 is the middle button. */
+/* GHOST convertButton: buttonNumber 2 is the middle button, 3 and 4 the side buttons (back,
+ * forward). */
+static int other_button(NSEvent *ev)
+{
+  switch ([ev buttonNumber]) {
+    case 2:
+      return 2;
+    case 3:
+      return BK_BUTTON_BACK;
+    case 4:
+      return BK_BUTTON_FORWARD;
+  }
+  return 0;
+}
+
 - (void)otherMouseDown:(NSEvent *)ev
 {
-  if (!bk || bk->disabled || [ev buttonNumber] != 2) {
+  const int button = other_button(ev);
+  if (!bk || bk->disabled || !button) {
     return;
   }
   int x, y;
   event_px(bk, ev, &x, &y);
-  BK_button(bk->ctx, x, y, 2, 0, mods_of([ev modifierFlags]));
+  BK_button(bk->ctx, x, y, button, 0, mods_of([ev modifierFlags]));
 }
 
 - (void)otherMouseUp:(NSEvent *)ev
 {
-  if (!bk || bk->disabled || [ev buttonNumber] != 2) {
+  const int button = other_button(ev);
+  if (!bk || bk->disabled || !button) {
     return;
   }
   int x, y;
   event_px(bk, ev, &x, &y);
-  BK_button(bk->ctx, x, y, 2, 1, mods_of([ev modifierFlags]) & ~BK_BUTTON1);
+  BK_button(bk->ctx, x, y, button, 1, mods_of([ev modifierFlags]) & ~BK_BUTTON1);
 }
 
 - (void)motion:(NSEvent *)ev
