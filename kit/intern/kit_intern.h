@@ -593,6 +593,7 @@ struct BKContext {
   double anim_t;
   /* custom nodes */
   int next_button;     /* the button the next in_BK_press / in_BK_release is for (0 = 1) */
+  BKNode *capture;     /* BK_capture_pointer: the "events" node all pointer input goes to */
   int in_custom_frame; /* inside custom frame callbacks: no host requests */
   double custom_timer_due; /* armed BK_TIMER_CUSTOM (bk_time), 0 = none */
   /* every live context (BK_set_theme redraws them all) */

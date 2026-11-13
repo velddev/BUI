@@ -185,3 +185,88 @@ fn every_frame_lays_the_rows_out_at_the_newest_window_size() {
         }
     });
 }
+
+/// Where the list is: its first visible item and that item's top (px estimates above it move
+/// as rows get measured, so the offset alone can't tell).
+fn offset(cx: &App, chat: &Chat) -> (usize, i64) {
+    let v = &chat.read(cx).view;
+    let p = v.placed().first().unwrap();
+    (p.item, (p.y * 100.0) as i64)
+}
+
+/// Step the clock a frame at a time.
+fn frames(cx: &mut App, id: WindowId, n: usize) {
+    for _ in 0..n {
+        cx.advance_clock(std::time::Duration::from_millis(16));
+        cx.draw(id);
+    }
+}
+
+#[test]
+fn the_middle_button_held_and_moved_scrolls_and_its_release_stops_it() {
+    run("dark", |cx| {
+        let (id, chat) = open(cx, 5_000);
+        frame(cx, id);
+        let start = offset(cx, &chat);
+        cx.simulate_middle(id, 300.0, 300.0, true);
+        assert!(cx.window(id).unwrap().is_autoscrolling());
+        assert_eq!(cx.window(id).unwrap().cursor_shape(), 6, "the all-scroll cursor");
+        // in the dead zone: nothing moves
+        cx.simulate_mouse_move(id, 303.0, 305.0);
+        frames(cx, id, 5);
+        assert_eq!(offset(cx, &chat), start);
+        // above the anchor: up, faster further out
+        cx.simulate_mouse_move(id, 300.0, 200.0);
+        frames(cx, id, 10);
+        let up = offset(cx, &chat);
+        assert!(up.0 < start.0, "{up:?} {start:?}");
+        cx.simulate_middle(id, 300.0, 200.0, false);
+        assert!(!cx.window(id).unwrap().is_autoscrolling());
+        assert_ne!(cx.window(id).unwrap().cursor_shape(), 6);
+        frames(cx, id, 10);
+        assert_eq!(offset(cx, &chat), up, "the release stopped it");
+    });
+}
+
+#[test]
+fn a_still_middle_click_autoscrolls_until_escape_a_click_or_the_wheel() {
+    run("dark", |cx| {
+        let (id, chat) = open(cx, 5_000);
+        frame(cx, id);
+        for exit in 0..3 {
+            cx.simulate_middle(id, 300.0, 300.0, true);
+            cx.simulate_middle(id, 300.0, 300.0, false);
+            assert!(cx.window(id).unwrap().is_autoscrolling(), "sticky");
+            let before = offset(cx, &chat);
+            cx.simulate_mouse_move(id, 300.0, 150.0);
+            frames(cx, id, 8);
+            let moved = offset(cx, &chat);
+            assert!(moved.0 < before.0, "{exit}: {moved:?} {before:?}");
+            match exit {
+                0 => cx.simulate_key(id, "", "Escape"),
+                1 => cx.simulate_click(id, 300.0, 150.0),
+                _ => cx.simulate_scroll(id, 300.0, 150.0, 0),
+            }
+            assert!(!cx.window(id).unwrap().is_autoscrolling(), "{exit}");
+            let after = offset(cx, &chat);
+            frames(cx, id, 8);
+            assert_eq!(offset(cx, &chat), after, "{exit}: stopped");
+        }
+    });
+}
+
+#[test]
+fn autoscroll_stops_cleanly_at_the_end_and_asks_for_no_frames() {
+    run("dark", |cx| {
+        let (id, chat) = open(cx, 2_000);
+        frame(cx, id);
+        // at the end already: down has nothing to scroll
+        let end = offset(cx, &chat);
+        cx.simulate_middle(id, 300.0, 100.0, true);
+        cx.simulate_mouse_move(id, 300.0, 390.0);
+        frames(cx, id, 6);
+        assert_eq!(offset(cx, &chat), end);
+        assert!(!cx.window(id).unwrap().needs_render(), "idle at the end");
+        cx.simulate_middle(id, 300.0, 390.0, false);
+    });
+}

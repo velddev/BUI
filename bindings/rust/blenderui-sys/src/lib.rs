@@ -359,6 +359,7 @@ unsafe extern "C" {
     pub fn BK_button(ctx: *mut BKContext, x: c_int, y: c_int, button: c_int, release: c_int,
                      mods: c_int) -> c_int;
     pub fn BK_context_menu(ctx: *mut BKContext, x: c_int, y: c_int, mods: c_int) -> c_int;
+    pub fn BK_capture_pointer(ctx: *mut BKContext, node: *mut BKNode);
     pub fn BK_timer(ctx: *mut BKContext, timer: c_int);
     pub fn BK_cursor(ctx: *mut BKContext) -> c_int;
     pub fn BK_focus_node(ctx: *mut BKContext, n: *mut BKNode);

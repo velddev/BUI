@@ -590,6 +590,39 @@ fn overlay_scrollbars_show_while_scrolling_then_fade() {
     });
 }
 
+#[test]
+fn a_middle_drag_autoscrolls_a_scroll_container_and_not_plain_space() {
+    Application::headless().run(|cx| {
+        let win = open(cx, 200.0, 100.0, Scroller);
+        let id = win.id;
+        cx.draw(id);
+        let at = |cx: &mut App| cx.window(id).unwrap().scroll_offset("scroller").1;
+        // beside the container nothing scrolls: no autoscroll
+        cx.simulate_middle(id, 150.0, 20.0, true);
+        assert!(!cx.window(id).unwrap().is_autoscrolling());
+        cx.simulate_middle(id, 150.0, 20.0, false);
+        cx.simulate_middle(id, 50.0, 20.0, true);
+        assert!(cx.window(id).unwrap().is_autoscrolling());
+        cx.simulate_mouse_move(id, 50.0, 90.0);
+        for _ in 0..10 {
+            cx.advance_clock(std::time::Duration::from_millis(16));
+            cx.draw(id);
+        }
+        let down = at(cx);
+        assert!(down > 0.0, "{down}");
+        // to the end and no further: it stops asking for frames
+        for _ in 0..200 {
+            cx.advance_clock(std::time::Duration::from_millis(16));
+            cx.draw(id);
+        }
+        assert_eq!(at(cx), 300.0);
+        cx.draw(id);
+        assert!(!cx.window(id).unwrap().needs_render());
+        cx.simulate_middle(id, 50.0, 90.0, false);
+        assert!(!cx.window(id).unwrap().is_autoscrolling());
+    });
+}
+
 /// A text box and a plain box, noting each mouse-down's click count.
 struct Triple {
     downs: std::rc::Rc<std::cell::RefCell<Vec<(&'static str, usize)>>>,

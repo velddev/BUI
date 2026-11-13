@@ -23,7 +23,7 @@
 //! chat.update(cx, |s, _| s.push(message));
 //! ```
 
-mod element;
+pub(crate) mod element;
 mod state;
 
 pub use blenderui_vlist::{

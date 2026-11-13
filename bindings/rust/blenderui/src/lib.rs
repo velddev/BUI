@@ -95,6 +95,7 @@ pub use blenderui_macros::rsx as view;
 pub use blenderui_macros::Props;
 
 pub mod anim;
+pub mod autoscroll;
 pub mod calc;
 pub mod components;
 pub mod effects;

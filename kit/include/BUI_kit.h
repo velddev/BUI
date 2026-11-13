@@ -638,6 +638,10 @@ int BK_ime_composing(BKContext *ctx);
  * forwarded to "events" nodes, no widget behavior. */
 int BK_key_release(BKContext *ctx, const char *keysym, int mods);
 int BK_button(BKContext *ctx, int x, int y, int button, int release, int mods);
+/* Capture the pointer for an "events" node (NULL lets it go): while set, every motion, press,
+ * middle release, wheel step and Escape goes to it alone, wherever the pointer is (over a text
+ * box too): a browser-style middle-button autoscroll. Released when the node is removed. */
+void BK_capture_pointer(BKContext *ctx, BKNode *node);
 void BK_timer(BKContext *ctx, int timer);
 void BK_bind(BKContext *ctx, const char *combo, void *ref); /* "ctrl+s" -> BK_EV_CALL */
 void BK_close_popups(BKContext *ctx);

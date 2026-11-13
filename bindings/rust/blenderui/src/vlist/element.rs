@@ -113,14 +113,19 @@ impl<S: ItemSource, P: Measurer + ItemPainter> IntoElement for VariableList<S, P
                 })
                 .on_mouse_up(MouseButton::Left, move |_, _, cx| up.update(cx, |s, _| s.pointer_up()))
                 .on_scroll_wheel(move |e, w, cx| {
-                    let key = wh.update(cx, |s, _| {
+                    let (key, moved) = wh.update(cx, |s, _| {
                         // Blender's wheel scrolls at once, a notch or a touchpad fraction alike: no easing
                         let lines = f64::from(e.delta);
+                        let before = s.view.scroll_extent().0;
                         s.view.wheel(-lines * WHEEL_NOTCH_PX, true);
-                        s.bar_key()
+                        (s.bar_key(), s.view.scroll_extent().0 != before)
                     });
                     w.poke_scrollbar(key);
-                    w.request_animation_frame();
+                    // nothing left to scroll (the top, the end): no frames
+                    if moved {
+                        w.note_scrolled();
+                        w.request_animation_frame();
+                    }
                 })
                 .on_key_down(move |e, w, cx| {
                     let (handled, k) = key.update(cx, |s, _| (s.key(&e.keystroke.key, LINE_PX), s.bar_key()));
@@ -144,7 +149,7 @@ impl<S: ItemSource, P: Measurer + ItemPainter> IntoElement for VariableList<S, P
 const LINE_PX: f64 = 19.0;
 
 /// One wheel notch, in px: several messages per notch.
-const WHEEL_NOTCH_PX: f64 = 57.0;
+pub(crate) const WHEEL_NOTCH_PX: f64 = 57.0;
 
 fn state_pointer_down<S: ItemSource, P: Measurer + ItemPainter>(
     state: Entity<ListState<S, P>>,

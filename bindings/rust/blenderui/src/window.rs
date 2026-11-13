@@ -26,6 +26,9 @@ use blenderui_sys as sys;
 /// How early a timer may fire and still count as due, s.
 pub(crate) const TIMER_SLOP: f64 = 0.0005;
 
+/// The kit's all-scroll cursor (CSS `all-scroll` / `move`), shown during an autoscroll.
+const ALL_SCROLL: i32 = 6;
+
 // ==========================================================================
 // Entities
 
@@ -728,6 +731,15 @@ impl App {
         });
     }
 
+    /// Press (`down`) or release the middle button at (x, y), as a host does (the pointer
+    /// moves there first).
+    pub fn simulate_middle(&mut self, window: WindowId, x: f32, y: f32, down: bool) {
+        self.simulate_mouse_move(window, x, y);
+        self.input(window, |ctx, s| unsafe {
+            sys::BK_button(ctx, (x * s) as c_int, (y * s) as c_int, 2, c_int::from(!down), 0);
+        });
+    }
+
     /// Click at (x, y) with modifier keys held (`ctrl`, `shift`).
     pub fn simulate_click_with(&mut self, window: WindowId, x: f32, y: f32, ctrl: bool, shift: bool) {
         let mods = c_int::from(shift) | (c_int::from(ctrl) << 1);
@@ -975,6 +987,12 @@ pub struct Window {
     due: Option<f64>,
     /// The tooltip (`crate::tooltip`).
     tips: crate::tooltip::Tips,
+    /// A middle-button autoscroll in progress (`crate::autoscroll`).
+    autoscroll: Option<crate::autoscroll::Autoscroll>,
+    /// A press that ended an autoscroll: its release is eaten too.
+    eat_release: Option<MouseButton>,
+    /// Something scrolled since this was last cleared (an autoscroll step's check).
+    scrolled: bool,
     /// Elements this pass rendered by where they were last laid out
     /// ([`Window::own_bounds`]), with those bounds.
     sized_by: Vec<(Key, Option<Bounds<f32>>)>,
@@ -1038,6 +1056,9 @@ impl Window {
                 bars: crate::scrollbar::Bars::default(),
                 due: None,
                 tips: crate::tooltip::Tips::default(),
+                autoscroll: None,
+                eat_release: None,
+                scrolled: false,
                 sized_by: Vec::new(),
             };
             if headless {
@@ -1403,6 +1424,7 @@ impl Window {
     fn rebuild(&mut self, app: &mut App) {
         /// Layout passes a frame takes at most (sizes feeding back settle in one or two).
         const LAYOUT_PASSES: u32 = 3;
+        let autoscrolling = self.step_autoscroll(app);
         let Some((mut frame, mut animating, mut again)) = self.build(app) else { return };
         let mut passes = 1;
         while again && passes < LAYOUT_PASSES {
@@ -1459,7 +1481,7 @@ impl Window {
         if container_changed {
             self.dirty = true;
         }
-        if animating {
+        if animating || autoscrolling {
             self.request_animation_frame();
         }
         self.wake_for_bars(now, reduced);
@@ -1665,14 +1687,7 @@ impl Window {
         });
         self.state.hovered = now;
         // cursor of the deepest element that sets one
-        if let Some(f) = &self.frame {
-            let cursor = path.iter().rev()
-                .find_map(|k| f.by_key().get(k).and_then(|&i| self.caches.styles[f.nodes[i].style].cursor)).unwrap_or(0);
-            if cursor != self.cursor {
-                self.cursor = cursor;
-                unsafe { sys::BK_set_num(self.canvas, c"cursor".as_ptr(), cursor as f64) };
-            }
-        }
+        self.refresh_cursor(&path);
         if fire {
             // hover listeners don't bubble: each element hears its own enter / leave
             for (keys, on) in [(left, false), (entered, true)] {
@@ -1734,6 +1749,13 @@ impl Window {
             }
             sys::BK_EV_MOTION | sys::BK_EV_ENTER => {
                 self.pointer = (x, y);
+                // out of the dead zone from stillness: the next frame starts moving
+                if let Some(a) = &mut self.autoscroll
+                    && a.pointer((x, y))
+                    && a.last.is_none()
+                {
+                    self.dirty = true;
+                }
                 if self.bars.drag.is_some() {
                     self.drag_bar(y);
                     return;
@@ -1748,6 +1770,10 @@ impl Window {
                 }
             }
             sys::BK_EV_LEAVE => {
+                // an autoscroll keeps the last position
+                if self.autoscroll.is_some() {
+                    return;
+                }
                 self.pointer = (-1.0, -1.0);
                 if self.bars.drag.is_none() {
                     self.hover_bars();
@@ -1755,8 +1781,17 @@ impl Window {
                 self.update_hover(app, true);
             }
             sys::BK_EV_PRESS | sys::BK_EV_DOUBLE => {
-                self.pointer = (x, y);
                 let (modifiers, button) = self.pointer_event(&ev.text);
+                // any press ends an autoscroll, and does nothing else
+                if self.autoscroll.is_some() {
+                    self.stop_autoscroll();
+                    self.eat_release = Some(button);
+                    return;
+                }
+                self.pointer = (x, y);
+                if button == MouseButton::Middle && self.start_autoscroll(x, y) {
+                    return;
+                }
                 if button == MouseButton::Left && self.grab_bar(y) {
                     return;
                 }
@@ -1778,6 +1813,19 @@ impl Window {
             }
             sys::BK_EV_RELEASE => {
                 let (modifiers, button) = self.pointer_event(&ev.text);
+                if self.eat_release == Some(button) {
+                    self.eat_release = None;
+                    return;
+                }
+                // the middle button let go: held and moved, it stops; still, it stays on
+                if button == MouseButton::Middle && let Some(a) = &mut self.autoscroll {
+                    if a.moved || a.sticky {
+                        self.stop_autoscroll();
+                    } else {
+                        a.sticky = true;
+                    }
+                    return;
+                }
                 if let Some((key, _)) = self.bars.drag.take() {
                     self.poke_scrollbar(key);
                     self.pointer = (x, y);
@@ -1805,6 +1853,10 @@ impl Window {
             }
             sys::BK_EV_WHEEL => {
                 let (modifiers, _) = self.pointer_event(&ev.text);
+                // the wheel ends an autoscroll, then scrolls as it does
+                if self.autoscroll.is_some() {
+                    self.stop_autoscroll();
+                }
                 let (px_, py_) = self.pointer;
                 let e = ScrollWheelEvent { position: point(px(px_), px(py_)), delta: ev.a as f32, modifiers };
                 let path = self.path_at(px_, py_);
@@ -1817,6 +1869,13 @@ impl Window {
                 let mut parts = ev.text.splitn(2, '\t');
                 let ch = parts.next().unwrap_or("").to_owned();
                 let key = parts.next().unwrap_or("").to_owned();
+                // Escape ends an autoscroll, and does nothing else
+                if self.autoscroll.is_some() && key.eq_ignore_ascii_case("escape") {
+                    if ev.kind == sys::BK_EV_KEY {
+                        self.stop_autoscroll();
+                    }
+                    return;
+                }
                 let ks = Keystroke { key, key_char: (!ch.is_empty()).then_some(ch),
                                      modifiers: Modifiers::from_kit(ev.a as i32) };
                 let target = self.state.focused.or_else(|| self.state_deepest())
@@ -1856,6 +1915,101 @@ impl Window {
         }
     }
 
+    /// The pointer's cursor: the all-scroll one during an autoscroll, else that of the deepest
+    /// element along `path` that sets one.
+    fn refresh_cursor(&mut self, path: &[Key]) {
+        let Some(f) = &self.frame else { return };
+        let cursor = if self.autoscroll.is_some() {
+            ALL_SCROLL
+        } else {
+            path.iter().rev()
+                .find_map(|k| f.by_key().get(k).and_then(|&i| self.caches.styles[f.nodes[i].style].cursor)).unwrap_or(0)
+        };
+        if cursor != self.cursor {
+            self.cursor = cursor;
+            unsafe { sys::BK_set_num(self.canvas, c"cursor".as_ptr(), cursor as f64) };
+        }
+    }
+
+    /// A middle press at (x, y): an autoscroll starts if something under it scrolls (a scroll
+    /// container that overflows, or an element that hears the wheel). Whether it started.
+    fn start_autoscroll(&mut self, x: f32, y: f32) -> bool {
+        let path = self.path_at(x, y);
+        let Some(f) = &self.frame else { return false };
+        let scrolls = path.iter().any(|k| f.by_key().get(k).is_some_and(|&i| {
+            let (rx, ry) = f.nodes[i].scroll_range;
+            rx > 0.0 || ry > 0.0 || f.el(i).and_then(|e| e.listeners.as_deref()).is_some_and(|l| !l.scroll.is_empty())
+        }));
+        if !scrolls {
+            return false;
+        }
+        self.hush_tooltip();
+        self.autoscroll = Some(crate::autoscroll::Autoscroll::new((x, y), path.clone()));
+        // SAFETY: the window's live context and canvas.
+        unsafe { sys::BK_capture_pointer(self.ctx, self.canvas) };
+        self.refresh_cursor(&path);
+        self.dirty = true;
+        true
+    }
+
+    /// End the autoscroll: the pointer and the cursor go back to what is under it.
+    fn stop_autoscroll(&mut self) {
+        if self.autoscroll.take().is_none() {
+            return;
+        }
+        // SAFETY: the window's live context.
+        unsafe { sys::BK_capture_pointer(self.ctx, std::ptr::null_mut()) };
+        let path = self.path_at(self.pointer.0, self.pointer.1);
+        self.refresh_cursor(&path);
+        self.dirty = true;
+    }
+
+    /// Whether a middle-button autoscroll is on (held or sticky).
+    pub fn is_autoscrolling(&self) -> bool {
+        self.autoscroll.is_some()
+    }
+
+    /// The cursor shown (the kit's: 0 default, 3 text, 5 pointer, 6 all-scroll ...).
+    pub fn cursor_shape(&self) -> i32 {
+        self.cursor
+    }
+
+    /// A list scrolled for an input (a virtual list's wheel): an autoscroll step checks it.
+    pub(crate) fn note_scrolled(&mut self) {
+        self.scrolled = true;
+    }
+
+    /// One autoscroll frame: scroll what is under its anchor by the pointer's speed times the
+    /// time since the last, as a wheel there would (its listeners, then scroll containers).
+    /// Whether it goes on moving (another frame is wanted); nothing scrolled (the top, the end)
+    /// or the pointer in the dead zone: still until the pointer moves.
+    fn step_autoscroll(&mut self, app: &mut App) -> bool {
+        let (now, pointer) = (self.clock.now(), self.pointer);
+        let Some(a) = &mut self.autoscroll else { return false };
+        let Some(dy) = a.step(now, pointer) else { return false };
+        if dy == 0.0 {
+            return true;
+        }
+        let (origin, path) = (a.origin, a.path.clone());
+        self.scrolled = false;
+        let e = ScrollWheelEvent {
+            position: point(px(origin.0), px(origin.1)),
+            delta: -dy / crate::vlist::element::WHEEL_NOTCH_PX as f32,
+            modifiers: Modifiers::default(),
+        };
+        if let Some(&deepest) = path.last() {
+            self.emit(app, deepest, &e, |l| l.scroll.iter().collect());
+        }
+        self.scroll_by(&path, dy, false);
+        if !self.scrolled {
+            if let Some(a) = &mut self.autoscroll {
+                a.last = None;
+            }
+            return false;
+        }
+        true
+    }
+
     /// Scroll the innermost scroll container along `path` that can move.
     fn scroll_by(&mut self, path: &[Key], dy: f32, horizontal: bool) {
         let Some(f) = &self.frame else { return };
@@ -1873,6 +2027,7 @@ impl Window {
             if (nx, ny) != (sx, sy) {
                 self.state.scroll.insert(*key, (nx, ny));
                 self.dirty = true;
+                self.scrolled = true;
                 let key = *key;
                 self.poke_scrollbar(key);
                 return;

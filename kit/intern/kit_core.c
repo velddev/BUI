@@ -1697,6 +1697,9 @@ void bk_forget(BKContext *ctx, BKNode *subtree)
   if (ctx->last_click_node && is_within(ctx->last_click_node, subtree)) {
     ctx->last_click_node = NULL;
   }
+  if (ctx->capture && is_within(ctx->capture, subtree)) {
+    ctx->capture = NULL;
+  }
   /* popups owned by the subtree */
   for (int i = 0; i < ctx->npopups; i++) {
     if (ctx->popups[i]->parent && is_within(ctx->popups[i]->parent, subtree)) {
@@ -1763,6 +1766,9 @@ void bk_close_popups_after(BKContext *ctx, BKNode *after)
     }
     if (ctx->last_click_node && is_within(ctx->last_click_node, p)) {
       ctx->last_click_node = NULL;
+    }
+    if (ctx->capture && is_within(ctx->capture, p)) {
+      ctx->capture = NULL;
     }
     if (ctx->modal && is_within(ctx->modal, p)) {
       ctx->modal = NULL;
@@ -2435,6 +2441,8 @@ void BK_set_pointer(BKContext *ctx, int x, int y)
   ctx->pointer_y = y;
 }
 
+static void raw_event(BKNode *n, int kind, int mods, const BKEvent *e, int button);
+
 static int in_BK_motion(BKContext *ctx, int x, int y, int mods)
 {
   if (ctx->has_skip) {
@@ -2447,6 +2455,14 @@ static int in_BK_motion(BKContext *ctx, int x, int y, int mods)
   ctx->pointer_y = y;
   int changed = hide_tooltip(ctx);
   changed |= region_scroll_update_alpha(ctx, x, y);
+  if (ctx->capture) { /* BK_capture_pointer: the motion is the capturing node's alone */
+    if (x <= -50000 || y <= -50000) {
+      return 0; /* the pointer left the window: keep the last position */
+    }
+    BKEvent e = make_event(ctx, ctx->capture, x, y, mods);
+    bk_event(ctx->capture, BK_EV_MOTION, mods, &e);
+    return 1;
+  }
   if (ctx->modal) {
     BKEvent e = make_event(ctx, ctx->modal, x, y, mods);
     if (ctx->modal->cls->move) {
@@ -2546,6 +2562,11 @@ static int in_BK_press(BKContext *ctx, int x, int y, int mods)
     return 1;
   }
   hide_tooltip(ctx);
+  if (ctx->capture) { /* BK_capture_pointer: a press only tells the capturing node */
+    BKEvent e = make_event(ctx, ctx->capture, x, y, mods);
+    raw_event(ctx->capture, BK_EV_PRESS, mods, &e, button);
+    return 1;
+  }
   ctx->pointer_x = x;
   ctx->pointer_y = y;
   ctx->press_x = x;
@@ -2692,7 +2713,6 @@ static int in_BK_release(BKContext *ctx, int x, int y, int mods)
   return 1;
 }
 
-static void raw_event(BKNode *n, int kind, int mods, const BKEvent *e, int button);
 
 static BKNode *buttons_target(BKContext *ctx, int x, int y)
 {
@@ -2785,6 +2805,10 @@ static int in_BK_key(BKContext *ctx, const char *text, const char *keysym, int m
   e.text = text ? text : "";
   e.keysym = keysym ? keysym : "";
   ctx->interaction++;
+  if (ctx->capture && bk_keysym_is(e.keysym, "Escape")) { /* BK_capture_pointer */
+    bk_event(ctx->capture, BK_EV_KEY, mods, &e);
+    return 1;
+  }
   for (BKNode *n = ctx->focus ? ctx->focus : ctx->hover; n; n = n->parent) {
     if (n->flags & NF_EVENTS) { /* Tk/Qt key bindings see the key first */
       bk_event(n, BK_EV_KEY, mods, &e);
@@ -2863,6 +2887,12 @@ static BKNode *deepest(BKNode *n, int x, int y)
 static int in_BK_wheel(BKContext *ctx, int x, int y, int delta, int mods)
 {
   hide_tooltip(ctx);
+  if (ctx->capture) { /* BK_capture_pointer: the wheel tells the capturing node */
+    BKEvent e = make_event(ctx, ctx->capture, x, y, mods);
+    e.delta = delta;
+    bk_event(ctx->capture, BK_EV_WHEEL, mods, &e);
+    return 1;
+  }
   BKNode *target = hit_all(ctx, x, y);
   if (!target && ctx->root && y >= ctx->header_h) {
     target = deepest(ctx->root, x, y); /* non-interactive area: let containers scroll */
@@ -3433,8 +3463,21 @@ int BK_key_release(BKContext *ctx, const char *keysym, int mods)
   return 0;
 }
 
+void BK_capture_pointer(BKContext *ctx, BKNode *node)
+{
+  ctx->capture = node && (node->flags & NF_EVENTS) ? node : NULL;
+}
+
 int BK_button(BKContext *ctx, int x, int y, int button, int release, int mods)
 {
+  if (ctx->capture) { /* BK_capture_pointer: presses and releases tell the capturing node */
+    if (!release) {
+      hide_tooltip(ctx);
+    }
+    BKEvent e = make_event(ctx, ctx->capture, x, y, mods);
+    raw_event(ctx->capture, release ? BK_EV_RELEASE : BK_EV_PRESS, mods, &e, button);
+    return 1;
+  }
   if (button == 2 || button == 3) { /* editors: middle drags, right drags */
     const int bit = button == 2 ? BK_BUTTON2 : BK_BUTTON3;
     if (custom_extra_button(ctx, x, y, button, release, mods | bit)) {
