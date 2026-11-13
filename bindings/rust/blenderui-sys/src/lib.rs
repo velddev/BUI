@@ -380,6 +380,7 @@ unsafe extern "C" {
     pub fn BK_capture_pointer(ctx: *mut BKContext, node: *mut BKNode);
     pub fn BK_timer(ctx: *mut BKContext, timer: c_int);
     pub fn BK_cursor(ctx: *mut BKContext) -> c_int;
+    pub fn BK_focus(ctx: *mut BKContext) -> *mut BKNode;
     pub fn BK_focus_node(ctx: *mut BKContext, n: *mut BKNode);
     pub fn BK_clipboard_get(ctx: *mut BKContext) -> *mut c_char;
     pub fn BK_clipboard_set(ctx: *mut BKContext, text: *const c_char);

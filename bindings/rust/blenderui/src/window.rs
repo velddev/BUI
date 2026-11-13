@@ -968,6 +968,8 @@ pub struct Window {
     canvas: *mut sys::BKNode,
     root: *mut sys::BKNode,
     opaque: bool,
+    /// The node the kit last had give the keys to, as last seen ([`Window::follow_kit_focus`]).
+    kit_focus: *mut sys::BKNode,
     native: Option<*mut sys::BKWindow>,
     raster: *mut sys::BuiRaster,
     phys: (i32, i32),
@@ -1054,6 +1056,7 @@ impl Window {
                 canvas,
                 root,
                 opaque: false,
+                kit_focus: std::ptr::null_mut(),
                 native: None,
                 raster: std::ptr::null_mut(),
                 phys: (w.round() as i32, h.round() as i32),
@@ -1348,6 +1351,7 @@ impl Window {
         if let Some(w) = self.widgets.nodes.get(&key) {
             // SAFETY: a live widget node of this window's kit context.
             unsafe { sys::BK_focus_node(self.ctx, w.node) };
+            self.kit_focus = w.node;
         }
         self.dirty = true;
     }
@@ -1840,9 +1844,29 @@ impl Window {
         });
     }
 
+    /// A text box the kit gave the keys to by itself (a press on it, which the kit takes
+    /// before the window hears it; its Tab): the window's focus follows, as a browser's does a
+    /// click into a field, so [`Window::focused_id`] names it and its `on_key_down` hears its
+    /// keys wherever the pointer is. A box giving the keys up (Escape) leaves the focus as it is.
+    fn follow_kit_focus(&mut self) {
+        // SAFETY: a query on this window's live context.
+        let n = unsafe { sys::BK_focus(self.ctx) };
+        if n == self.kit_focus {
+            return;
+        }
+        self.kit_focus = n;
+        if let Some(key) = (!n.is_null()).then(|| self.widgets.key_of(n)).flatten() {
+            if self.state.focused != Some(key) {
+                self.set_focus(&[key]);
+                self.dirty = true;
+            }
+        }
+    }
+
     fn dispatch(&mut self, ev: RawEvent, app: &mut App) {
         // events after a DPI change come in device pixels at the new scale
         self.take_native_scale();
+        self.follow_kit_focus();
         if ev.node != self.canvas {
             self.widget_event(ev, app);
             return;

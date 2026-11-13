@@ -423,6 +423,57 @@ impl Render for PassKeys {
     }
 }
 
+struct TwoBoxes {
+    keys: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+}
+
+impl Render for TwoBoxes {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let heard = |name: &'static str, keys: std::rc::Rc<std::cell::RefCell<Vec<String>>>| {
+            move |e: &KeyDownEvent, _: &mut Window, _: &mut App| keys.borrow_mut().push(format!("{name} {}", e.keystroke.key))
+        };
+        div()
+            .styled()
+            .id("root")
+            .size_full()
+            .child(textarea().id("a").h(px(40.0)).value("one").on_key_down(heard("a", self.keys.clone())))
+            .child(textarea().id("b").h(px(40.0)).value("two").on_key_down(heard("b", self.keys.clone())))
+            .child(div().id("away").h(px(100.0)))
+    }
+}
+
+/// A click into a text box gives it the window's focus too: `focused_id` names it, and its
+/// key listeners hear its keys with the pointer elsewhere. Escape leaves the focus alone.
+#[test]
+fn a_click_into_a_textarea_moves_the_windows_focus() {
+    Application::headless().run(|cx| {
+        let keys = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let win = open(cx, 400.0, 600.0, TwoBoxes { keys: keys.clone() });
+        let id = win.id;
+        cx.draw(id);
+        let focused = |cx: &mut App| win.update(cx, |_, w, _| w.focused_id().map(str::to_string)).unwrap();
+        let centre = |cx: &mut App, el: &str| {
+            let b = cx.element_bounds(id, el).unwrap();
+            (b.origin.x + b.size.width / 2.0, b.origin.y + b.size.height / 2.0)
+        };
+        assert_eq!(focused(cx), None);
+        let (x, y) = centre(cx, "b");
+        cx.simulate_click(id, x, y);
+        let (x, y) = centre(cx, "away");
+        cx.simulate_mouse_move(id, x, y);
+        assert_eq!(focused(cx).as_deref(), Some("b"));
+        cx.simulate_key(id, "", "Return");
+        let (x, y) = centre(cx, "a");
+        cx.simulate_click(id, x, y);
+        cx.simulate_mouse_move(id, 300.0, 500.0);
+        assert_eq!(focused(cx).as_deref(), Some("a"));
+        cx.simulate_key(id, "", "Return");
+        cx.simulate_key(id, "", "Escape");
+        assert_eq!(focused(cx).as_deref(), Some("a"), "Escape leaves the window's focus");
+        assert_eq!(*keys.borrow(), ["b Return", "a Return", "a Escape"]);
+    });
+}
+
 #[test]
 fn textarea_pass_keys_leave_keys_to_the_app() {
     Application::headless().run(|cx| {
