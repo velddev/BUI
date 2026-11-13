@@ -459,9 +459,9 @@ fn a_click_into_a_textarea_moves_the_windows_focus() {
         assert_eq!(focused(cx), None);
         let (x, y) = centre(cx, "b");
         cx.simulate_click(id, x, y);
+        assert_eq!(focused(cx).as_deref(), Some("b"), "at once, before another event");
         let (x, y) = centre(cx, "away");
         cx.simulate_mouse_move(id, x, y);
-        assert_eq!(focused(cx).as_deref(), Some("b"));
         cx.simulate_key(id, "", "Return");
         let (x, y) = centre(cx, "a");
         cx.simulate_click(id, x, y);
