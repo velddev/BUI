@@ -1303,11 +1303,14 @@ void bk_wl_window_wm(BKWindow *win, const char *key, double a, double b)
   if (!win->open) {
     return;
   }
+  /* logical px, like BK_window_set_size: x ui_scale is pixels, / bscale surface units */
   if (!strcmp(key, "minsize")) {
-    xdg_toplevel_set_min_size(win->toplevel, (int)(a / win->bscale), (int)(b / win->bscale));
+    xdg_toplevel_set_min_size(win->toplevel, (int)(a * win->ui_scale / win->bscale),
+                              (int)(b * win->ui_scale / win->bscale));
   }
   else if (!strcmp(key, "maxsize")) {
-    xdg_toplevel_set_max_size(win->toplevel, (int)(a / win->bscale), (int)(b / win->bscale));
+    xdg_toplevel_set_max_size(win->toplevel, (int)(a * win->ui_scale / win->bscale),
+                              (int)(b * win->ui_scale / win->bscale));
   }
   else if (!strcmp(key, "state")) {
     if (a == 1) {

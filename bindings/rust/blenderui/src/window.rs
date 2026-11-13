@@ -402,6 +402,14 @@ unsafe extern "C" fn on_wake() {
     }
 }
 
+/// The `"minsize"` request's arguments for a window's minimum content size:
+/// logical px, as every host's `BK_window_wm` takes them (each applies the UI
+/// scale itself, like `BK_window_set_size`). Scaling here too doubled the
+/// minimum on a scaled display (1800x1120 points for 900x560 on a Retina Mac).
+fn wm_min_size(m: Size<Pixels>) -> (f64, f64) {
+    (m.width.0 as f64, m.height.0 as f64)
+}
+
 impl App {
     fn create(headless: bool) -> App {
         App { windows: Vec::new(), entities: Vec::new(), headless, globals: HashMap::new(), propagate: true,
@@ -450,8 +458,8 @@ impl App {
                     sys::BK_window_wm(*n, c"resizable".as_ptr(), 0.0, 0.0);
                 }
                 if let Some(m) = options.window_min_size {
-                    sys::BK_window_wm(*n, c"minsize".as_ptr(), (m.width.0 * w.scale) as f64,
-                                      (m.height.0 * w.scale) as f64);
+                    let (mw, mh) = wm_min_size(m);
+                    sys::BK_window_wm(*n, c"minsize".as_ptr(), mw, mh);
                 }
                 if options.gpu == Some(true) {
                     sys::BK_window_set_gpu(*n, 1);
@@ -1805,4 +1813,15 @@ fn snap(f: &crate::layout::Frame, styles: &crate::layout::StyleStore, i: usize, 
         }
     }
     out
+}
+
+#[cfg(test)]
+mod min_size_tests {
+    use super::*;
+
+    #[test]
+    fn the_minimum_size_goes_to_the_host_unscaled() {
+        // the host scales it: a 900x560 minimum stays 900x560 whatever the UI scale
+        assert_eq!(wm_min_size(size(px(900.0), px(560.0))), (900.0, 560.0));
+    }
 }

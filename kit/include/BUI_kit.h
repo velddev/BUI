@@ -700,7 +700,8 @@ int BK_window_timer(BKWindow *win, int ms); /* one-shot; returns its id */
 void BK_window_request_frame(BKWindow *win, int vsync);
 void BK_window_cancel_timer(BKWindow *win, int id);
 void *BK_window_handle(BKWindow *win);       /* HWND / X11 Window / NSWindow * */
-/* Window-manager requests (Tk's wm): "pos" (x, y), "minsize"/"maxsize" (w, h),
+/* Window-manager requests (Tk's wm): "pos" (x, y), "minsize"/"maxsize" (w, h:
+ * the content's limits in logical px, before the UI scale, as BK_window_new),
  * "resizable" (w, h), "topmost" (a), "alpha" (a), "override" (a), "state"
  * (0 normal, 1 iconic, 2 withdrawn, 3 zoomed), "lift", "lower", "focus". */
 void BK_window_wm(BKWindow *win, const char *key, double a, double b);
