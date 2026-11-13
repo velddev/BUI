@@ -1452,14 +1452,17 @@ impl Window {
     /// Call the listeners `pick` selects, from element `key` up to the root.
     /// The frame is moved out of the window meanwhile, so listeners can take
     /// `&mut Window` while the frame lends them out: no copies, no `Rc`.
+    /// Calls the listeners `pick` chooses on `key` and its ancestors; whether any was called.
     fn emit<E: 'static>(&mut self, app: &mut App, key: Key, e: &E,
-                        pick: impl Fn(&Listeners) -> Vec<&Listener<E>>) {
-        let Some(frame) = self.frame.take() else { return };
+                        pick: impl Fn(&Listeners) -> Vec<&Listener<E>>) -> bool {
+        let Some(frame) = self.frame.take() else { return false };
+        let mut heard = false;
         app.propagate = true;
         let mut cur = frame.by_key().get(&key).copied();
         'up: while let Some(i) = cur {
             if let Some(ls) = frame.el(i).and_then(|e| e.listeners.as_deref()) {
                 for l in pick(ls) {
+                    heard = true;
                     l(e, self, app);
                     if !app.propagate {
                         break 'up;
@@ -1472,6 +1475,7 @@ impl Window {
         if self.frame.is_none() {
             self.frame = Some(frame);
         }
+        heard
     }
 
     fn update_hover(&mut self, app: &mut App, fire: bool) {
@@ -1721,8 +1725,11 @@ impl Window {
                     }
                     _ => {}
                 }
-                self.emit(app, key, &e, |l| l.input.iter().collect());
-                self.emit(app, key, &e, |l| l.change.iter().collect());
+                let input = self.emit(app, key, &e, |l| l.input.iter().collect());
+                let change = self.emit(app, key, &e, |l| l.change.iter().collect());
+                if input || change {
+                    self.widgets.edited(key);
+                }
                 self.dirty = true;
             }
             sys::BK_EV_CLICK => {

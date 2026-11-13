@@ -454,6 +454,52 @@ fn focus_id_gives_a_textarea_the_kit_focus_back() {
     });
 }
 
+/// A single-line field the app controls: it drops the line breaks Enter types.
+#[derive(Default)]
+struct OneLine {
+    text: String,
+}
+
+impl Render for OneLine {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div().styled().child(
+            textarea().id("line").value(self.text.clone()).on_change(cx.listener(|this, e: &ChangeEvent, _, cx| {
+                this.text = e.value.replace(['\n', '\r'], "");
+                cx.notify();
+            })),
+        )
+    }
+}
+
+/// A controlled text box shows the app's value after every edit, even when that value is the
+/// one it gave before: the line break Enter typed is gone, so BackSpace takes the last letter.
+#[test]
+fn a_controlled_text_box_drops_what_the_app_dropped() {
+    Application::headless().run(|cx| {
+        let win = open(cx, 400.0, 300.0, OneLine::default());
+        let id = win.id;
+        cx.draw(id);
+        let b = cx.element_bounds(id, "line").unwrap();
+        cx.simulate_click(id, b.origin.x + 4.0, b.origin.y + 4.0);
+        for c in ["a", "b"] {
+            cx.simulate_key(id, c, c);
+            cx.draw(id);
+        }
+        cx.simulate_key(id, "\r", "Return");
+        cx.draw(id);
+        assert_eq!(win.root().read(cx).text, "ab");
+        let shown = win.update(cx, |_, w, _| w.textarea_caret("line")).unwrap();
+        assert_eq!(shown, Some(TextCaret::at(2)), "the line break is gone from the box too");
+        cx.simulate_key(id, "", "BackSpace");
+        cx.draw(id);
+        assert_eq!(win.root().read(cx).text, "a", "BackSpace takes the b, not an unseen line break");
+        // typing goes on where it was
+        cx.simulate_key(id, "c", "c");
+        cx.draw(id);
+        assert_eq!(win.root().read(cx).text, "ac");
+    });
+}
+
 struct Scroller;
 
 impl Render for Scroller {

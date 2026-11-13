@@ -327,6 +327,9 @@ pub(crate) struct WidgetNode {
     pub node: *mut sys::BKNode,
     pub spec: WidgetSpec,
     seen: bool,
+    /// The user changed the text since the last render, and the app heard it: the next render's
+    /// value wins even when it is the one the app gave before (see [`Widgets::edited`]).
+    edited: bool,
 }
 
 /// The kit widgets of one window, keyed by element key.
@@ -358,13 +361,30 @@ impl Widgets {
                 sys::BK_node_add(parent, node, -1);
                 sys::BK_geom_set_manager(node, sys::BK_GEOM_PLACE);
             }
-            let w = WidgetNode { node, spec: spec.clone(), seen: true };
+            let w = WidgetNode { node, spec: spec.clone(), seen: true, edited: false };
             sync(node, None, spec);
             w
         });
+        let text_was = entry.spec.text.clone();
         if entry.spec != *spec {
             sync(entry.node, Some(&entry.spec), spec);
             entry.spec = spec.clone();
+        }
+        // A controlled text box: the app heard the user's edit and rendered the same value as
+        // before (it dropped a typed line break, say), so the spec didn't change, but the box
+        // still shows the edit. Put the app's value back, as a browser's controlled input does.
+        if std::mem::take(&mut entry.edited)
+            && let Some(t) = spec.text.as_deref().filter(|t| text_was.as_deref() == Some(*t))
+            && matches!(spec.kind, WKind::Text { .. } | WKind::TextArea)
+        {
+            let n = entry.node;
+            // SAFETY: live node; the returned string is copied at once.
+            let shown = unsafe { CStr::from_ptr(sys::BK_get_str(n, c"value".as_ptr())).to_string_lossy().into_owned() };
+            if shown != t {
+                let prop = if spec.kind == WKind::TextArea { c"value" } else { c"text" };
+                let c = cstr(t);
+                unsafe { sys::BK_set_str(n, prop.as_ptr(), c.as_ptr()) };
+            }
         }
         entry.seen = true;
         self.syncing = false;
@@ -445,6 +465,16 @@ impl Widgets {
             .filter(|(k, w)| **k != key && w.spec.kind == WKind::Radio && w.spec.name.as_ref() == Some(&name))
             .map(|(k, _)| *k)
             .collect()
+    }
+
+    /// The text box `key` was edited by the user and a listener heard it: its next render puts
+    /// the app's value back if the box shows something else.
+    pub(crate) fn edited(&mut self, key: Key) {
+        if let Some(w) = self.nodes.get_mut(&key)
+            && matches!(w.spec.kind, WKind::Text { .. } | WKind::TextArea)
+        {
+            w.edited = true;
+        }
     }
 
     /// The kit node of the textarea `key`.
