@@ -17,7 +17,7 @@ pub fn options(w: f32, h: f32, title: &str) -> WindowOptions {
             origin: point(px(0.0), px(0.0)),
             size: size(px(w), px(h)),
         })),
-        titlebar: Some(TitlebarOptions { title: Some(title.to_string().into()) }),
+        titlebar: Some(TitlebarOptions { title: Some(title.to_string().into()), ..Default::default() }),
         ..Default::default()
     }
 }

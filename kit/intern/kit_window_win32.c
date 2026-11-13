@@ -49,6 +49,9 @@ struct BKWindow {
   DWORD style;                    /* framed style restored by "override" 0 */
   BKImeWin32 ime;                 /* the IME (GHOST_ImeWin32) */
   WPARAM last_vk;                 /* the virtual key of the last WM_KEYDOWN */
+  int titlebar;                   /* "titlebar": the host draws it; no caption */
+  int nc_tracking;                /* TME_NONCLIENT leave asked (the maximise button) */
+  BKAreas areas;                  /* BK_window_set_areas */
 };
 
 static int g_open = 0;
@@ -149,6 +152,49 @@ static float window_dpi_scale(HWND hwnd)
   GetDpi get = user32 ? (GetDpi)(void *)GetProcAddress(user32, "GetDpiForWindow") : NULL;
   const UINT dpi = (get && hwnd) ? get(hwnd) : 96;
   return BK_MAX(1.0f, dpi / 96.0f);
+}
+
+/* GetSystemMetricsForDpi (Windows 10 1607+), else the system DPI's metric. */
+static int metric_for(HWND hwnd, int index)
+{
+  HMODULE user32 = GetModuleHandleW(L"user32.dll");
+  typedef UINT(WINAPI * GetDpi)(HWND);
+  typedef int(WINAPI * MetricFn)(int, UINT);
+  GetDpi get = user32 ? (GetDpi)(void *)GetProcAddress(user32, "GetDpiForWindow") : NULL;
+  MetricFn fn = user32 ? (MetricFn)(void *)GetProcAddress(user32, "GetSystemMetricsForDpi") :
+                         NULL;
+  return (get && fn && hwnd) ? fn(index, get(hwnd)) : GetSystemMetrics(index);
+}
+
+/* The resize border's thickness: how far a maximised window reaches past the monitor's
+ * edge, and the top resize border of a window whose title bar the host draws. */
+static int frame_border(HWND hwnd)
+{
+  return metric_for(hwnd, SM_CYFRAME) + metric_for(hwnd, SM_CXPADDEDBORDER);
+}
+
+/* The host draws the title bar: a framed window that asked for it ("titlebar"). */
+static int own_titlebar(BKWindow *win)
+{
+  return win->titlebar && (GetWindowLongPtrW(win->hwnd, GWL_STYLE) & WS_CAPTION);
+}
+
+/* AdjustWindowRect for `win`: its content grows into the caption it no longer has. */
+static void adjust_rect(BKWindow *win, RECT *r, DWORD style)
+{
+  const LONG top = r->top;
+  AdjustWindowRect(r, style, FALSE);
+  if (win->titlebar && (style & WS_CAPTION)) {
+    r->top = top;
+  }
+}
+
+/* A screen point in client coordinates. */
+static POINT client_point(HWND hwnd, LPARAM lp)
+{
+  POINT p = {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+  ScreenToClient(hwnd, &p);
+  return p;
 }
 
 static wchar_t *utf8_to_wide(const char *s)
@@ -514,6 +560,82 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     }
     case WM_ERASEBKGND:
       return 1;
+    case WM_NCCALCSIZE:
+      if (wp && own_titlebar(win)) {
+        /* no caption: the content starts at the window's top; the side and bottom resize
+         * borders stay the system's (invisible since Windows 10, with its shadow). A
+         * maximised window reaches past the monitor by the border, so it starts below it. */
+        NCCALCSIZE_PARAMS *p = (NCCALCSIZE_PARAMS *)lp;
+        const LONG top = p->rgrc[0].top;
+        const LRESULT r = DefWindowProcW(hwnd, msg, wp, lp);
+        p->rgrc[0].top = top + (IsZoomed(hwnd) ? frame_border(hwnd) : 0);
+        return r;
+      }
+      break;
+    case WM_NCHITTEST:
+      if (own_titlebar(win)) {
+        const LRESULT sys = DefWindowProcW(hwnd, msg, wp, lp); /* side and bottom borders */
+        if (sys != HTCLIENT) {
+          return sys;
+        }
+        const POINT p = client_point(hwnd, lp);
+        const int area = BK_areas_at(win->areas.v, win->areas.n, (float)p.x, (float)p.y);
+        switch (BK_frame_hit(area, p.y, frame_border(hwnd), IsZoomed(hwnd))) {
+          case BK_HIT_TOP:
+            return HTTOP;
+          case BK_HIT_CAPTION:
+            return HTCAPTION;
+          case BK_HIT_MAXBUTTON:
+            return HTMAXBUTTON; /* Windows 11 offers its snap layouts on hover */
+          default:
+            return HTCLIENT;
+        }
+      }
+      break;
+    /* The maximise button is HTMAXBUTTON, so its pointer messages are non-client ones: the
+     * host hears them as its own, so the button hovers and clicks as the others do. */
+    case WM_NCMOUSEMOVE:
+      if (own_titlebar(win)) {
+        if (wp == HTMAXBUTTON) {
+          if (!win->nc_tracking) {
+            TRACKMOUSEEVENT t = {sizeof(t), TME_LEAVE | TME_NONCLIENT, hwnd, 0};
+            TrackMouseEvent(&t);
+            win->nc_tracking = 1;
+          }
+          const POINT p = client_point(hwnd, lp);
+          BK_motion(ctx, p.x, p.y, mods_now(0, 0));
+        }
+        else {
+          BK_motion(ctx, -100000, -100000, 0); /* the caption: nothing of the host's */
+        }
+      }
+      break;
+    case WM_NCMOUSELEAVE:
+      if (win->nc_tracking) {
+        win->nc_tracking = 0;
+        if (GetCapture() != hwnd) { /* wherever it went: the content's hover follows */
+          POINT p;
+          GetCursorPos(&p);
+          ScreenToClient(hwnd, &p);
+          BK_motion(ctx, p.x, p.y, 0);
+        }
+      }
+      break;
+    case WM_NCLBUTTONDOWN:
+    case WM_NCLBUTTONDBLCLK:
+      if (own_titlebar(win) && wp == HTMAXBUTTON) {
+        const POINT p = client_point(hwnd, lp);
+        BK_press(ctx, p.x, p.y, mods_now(0, 0) | BK_BUTTON1);
+        return 0; /* not the system's: the host's click maximises */
+      }
+      break;
+    case WM_NCLBUTTONUP:
+      if (own_titlebar(win) && wp == HTMAXBUTTON) {
+        const POINT p = client_point(hwnd, lp);
+        BK_release(ctx, p.x, p.y, mods_now(0, 0));
+        return 0;
+      }
+      break;
     case WM_SIZE:
       host_request(win);
       return 0;
@@ -601,13 +723,13 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       const DWORD style = (DWORD)GetWindowLongPtrW(hwnd, GWL_STYLE);
       if (win->min_w || win->min_h) {
         RECT r = {0, 0, (LONG)(win->min_w * win->scale), (LONG)(win->min_h * win->scale)};
-        AdjustWindowRect(&r, style, FALSE);
+        adjust_rect(win, &r, style);
         mm->ptMinTrackSize.x = win->min_w ? r.right - r.left : mm->ptMinTrackSize.x;
         mm->ptMinTrackSize.y = win->min_h ? r.bottom - r.top : mm->ptMinTrackSize.y;
       }
       if (win->max_w || win->max_h) {
         RECT r = {0, 0, (LONG)(win->max_w * win->scale), (LONG)(win->max_h * win->scale)};
-        AdjustWindowRect(&r, style, FALSE);
+        adjust_rect(win, &r, style);
         mm->ptMaxTrackSize.x = win->max_w ? r.right - r.left : mm->ptMaxTrackSize.x;
         mm->ptMaxTrackSize.y = win->max_h ? r.bottom - r.top : mm->ptMaxTrackSize.y;
       }
@@ -833,6 +955,7 @@ void BK_window_free(BKWindow *win)
   }
   BUI_raster_free(win->raster);
   bk_ime_win32_free(&win->ime);
+  bk_areas_free(&win->areas);
   free(win);
 }
 
@@ -876,7 +999,7 @@ void BK_window_set_size(BKWindow *win, int width, int height)
     return;
   }
   RECT r = {0, 0, (LONG)(width * win->scale), (LONG)(height * win->scale)};
-  AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
+  adjust_rect(win, &r, (DWORD)GetWindowLongPtrW(win->hwnd, GWL_STYLE));
   SetWindowPos(win->hwnd, NULL, 0, 0, r.right - r.left, r.bottom - r.top,
                SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
@@ -1045,6 +1168,26 @@ void BK_window_wm(BKWindow *win, const char *key, double a, double b)
     SetForegroundWindow(h);
     SetFocus(h);
   }
+  else if (!strcmp(key, "titlebar")) {
+    if (win->titlebar == (a != 0.0)) {
+      return;
+    }
+    RECT rc; /* the content keeps its size: the window loses (or gets back) the caption */
+    GetClientRect(h, &rc);
+    win->titlebar = a != 0.0;
+    set_style(h, (DWORD)GetWindowLongPtrW(h, GWL_STYLE) & ~WS_VISIBLE);
+    if (!IsZoomed(h) && !IsIconic(h)) {
+      RECT r = {0, 0, rc.right, rc.bottom};
+      adjust_rect(win, &r, (DWORD)GetWindowLongPtrW(h, GWL_STYLE));
+      SetWindowPos(h, NULL, 0, 0, r.right - r.left, r.bottom - r.top,
+                   SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+  }
+}
+
+void BK_window_set_areas(BKWindow *win, const BKWindowArea *areas, int count)
+{
+  bk_areas_set(&win->areas, areas, count);
 }
 
 int BK_window_wm_get(BKWindow *win, const char *key, double *r_a, double *r_b)

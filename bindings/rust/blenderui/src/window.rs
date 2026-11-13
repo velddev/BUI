@@ -14,6 +14,7 @@ use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 
 use crate::element::{AnyElement, IntoElement, Listener, Listeners, SharedString};
+use crate::chrome::WindowControlArea;
 use crate::events::*;
 use crate::geometry::{point, px, size, Bounds, Pixels, Size};
 use crate::layout::{id_key, layout, Content, Frame, Key, LayoutCaches, UiState};
@@ -213,6 +214,14 @@ pub enum WindowBounds {
 #[derive(Clone, Debug, Default)]
 pub struct TitlebarOptions {
     pub title: Option<SharedString>,
+    /// The app draws the title bar (gpui's): on Windows the window has no caption (its resize
+    /// borders stay) and on macOS its content runs under a transparent title bar with the
+    /// traffic lights over it. Mark the bar's parts with
+    /// [`window_control_area`](crate::Div::window_control_area). Linux keeps the system's.
+    pub appears_transparent: bool,
+    /// macOS, with `appears_transparent`: the close button's left edge and the traffic
+    /// lights' vertical centre, from the content's top-left (logical px).
+    pub traffic_light_position: Option<crate::geometry::Point<Pixels>>,
 }
 
 /// Options for [`App::open_window`] (gpui's `WindowOptions`).
@@ -452,8 +461,16 @@ impl App {
             .map(|t| t.to_string()).unwrap_or_else(|| "BUI".into());
         let id = self.windows.len();
         let mut w = Window::create(id, &title, bounds.size.width.0, bounds.size.height.0, self.headless)?;
+        let own_titlebar = options.titlebar.as_ref().is_some_and(|t| t.appears_transparent);
+        w.own_titlebar = own_titlebar;
         if let Some(n) = &w.native {
             unsafe {
+                if own_titlebar {
+                    sys::BK_window_wm(*n, c"titlebar".as_ptr(), 1.0, 0.0);
+                    if let Some(p) = options.titlebar.as_ref().and_then(|t| t.traffic_light_position) {
+                        sys::BK_window_wm(*n, c"traffic_lights".as_ptr(), p.x.0 as f64, p.y.0 as f64);
+                    }
+                }
                 if let Some(WindowBounds::Maximized(_)) = options.window_bounds {
                     sys::BK_window_wm(*n, c"state".as_ptr(), 1.0, 0.0);
                 }
@@ -996,6 +1013,13 @@ pub struct Window {
     /// Elements this pass rendered by where they were last laid out
     /// ([`Window::own_bounds`]), with those bounds.
     sized_by: Vec<(Key, Option<Bounds<f32>>)>,
+    /// The app draws the title bar ([`TitlebarOptions::appears_transparent`]).
+    own_titlebar: bool,
+    /// Its areas as last handed to the native host (`crate::chrome::areas`).
+    areas: Vec<sys::BKWindowArea>,
+    /// Headless: what `zoom_window` / `minimize_window` asked.
+    zoomed: bool,
+    minimized: bool,
 }
 
 impl Window {
@@ -1060,6 +1084,10 @@ impl Window {
                 eat_release: None,
                 scrolled: false,
                 sized_by: Vec::new(),
+                own_titlebar: false,
+                areas: Vec::new(),
+                zoomed: false,
+                minimized: false,
             };
             if headless {
                 win.scale = sys::BK_scale().max(1.0);
@@ -1209,6 +1237,84 @@ impl Window {
     pub fn is_gpu(&self) -> bool {
         // SAFETY: `native` is a live kit window owned by this Window.
         self.native.map(|n| unsafe { sys::BK_window_gpu(n) } != 0).unwrap_or(false)
+    }
+
+    /// Hand the native host the title bar's areas when they changed (`crate::chrome`).
+    fn hand_over_areas(&mut self, frame: &Frame) {
+        let areas = crate::chrome::areas(frame, &self.caches.styles, self.scale);
+        if areas == self.areas {
+            return;
+        }
+        self.areas = areas;
+        if let Some(n) = self.native {
+            // SAFETY: a live native window; the kit copies the list.
+            unsafe { sys::BK_window_set_areas(n, self.areas.as_ptr(), self.areas.len() as c_int) };
+        }
+    }
+
+    /// Whether the app draws this window's title bar ([`TitlebarOptions::appears_transparent`]).
+    pub fn has_own_titlebar(&self) -> bool {
+        self.own_titlebar
+    }
+
+    /// What the native host takes the point (logical px) for: the title bar area it was
+    /// handed there, as of the last frame (`None` is the app's own content). Only windows
+    /// that draw their title bar have areas.
+    pub fn control_area_at(&self, at: crate::geometry::Point<Pixels>) -> Option<WindowControlArea> {
+        crate::chrome::lookup(&self.areas, at.x.0 * self.scale, at.y.0 * self.scale)
+    }
+
+    /// The area of the box the window's own hit test finds at the point (logical px): what
+    /// [`Window::control_area_at`] should agree with.
+    pub fn control_area_hit(&self, at: crate::geometry::Point<Pixels>) -> Option<WindowControlArea> {
+        let f = self.frame.as_ref()?;
+        crate::chrome::area_at(f, &self.caches.styles, at.x.0, at.y.0)
+    }
+
+    /// Whether the window is maximised (zoomed on macOS).
+    pub fn is_maximized(&self) -> bool {
+        match self.native {
+            Some(n) => {
+                let (mut a, mut b) = (0.0, 0.0);
+                // SAFETY: a live native window; the two doubles are written.
+                let known = unsafe { sys::BK_window_wm_get(n, c"state".as_ptr(), &raw mut a, &raw mut b) };
+                known != 0 && a == 3.0
+            }
+            None => self.zoomed,
+        }
+    }
+
+    /// Maximise the window, or restore it when it is (gpui's `zoom_window`; macOS zooms).
+    pub fn zoom_window(&mut self) {
+        let to = if self.is_maximized() { 0.0 } else { 3.0 };
+        match self.native {
+            // SAFETY: a live native window.
+            Some(n) => unsafe { sys::BK_window_wm(n, c"state".as_ptr(), to, 0.0) },
+            None => self.zoomed = to == 3.0,
+        }
+        self.dirty = true;
+    }
+
+    /// Minimise the window.
+    pub fn minimize_window(&mut self) {
+        match self.native {
+            // SAFETY: a live native window.
+            Some(n) => unsafe { sys::BK_window_wm(n, c"state".as_ptr(), 1.0, 0.0) },
+            None => self.minimized = true,
+        }
+    }
+
+    /// Whether the window is minimised (headless: whether [`Window::minimize_window`] ran).
+    pub fn is_minimized(&self) -> bool {
+        match self.native {
+            Some(n) => {
+                let (mut a, mut b) = (0.0, 0.0);
+                // SAFETY: a live native window; the two doubles are written.
+                let known = unsafe { sys::BK_window_wm_get(n, c"state".as_ptr(), &raw mut a, &raw mut b) };
+                known != 0 && a == 1.0
+            }
+            None => self.minimized,
+        }
     }
 
     pub fn set_window_title(&mut self, title: &str) {
@@ -1471,6 +1577,9 @@ impl Window {
         }
         if let Some(t) = frame.title.clone() {
             self.set_window_title(&t);
+        }
+        if self.own_titlebar {
+            self.hand_over_areas(&frame);
         }
         self.frame = Some(frame);
         self.update_hover(app, false);

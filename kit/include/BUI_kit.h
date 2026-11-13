@@ -714,7 +714,12 @@ void *BK_window_handle(BKWindow *win);       /* HWND / X11 Window / NSWindow * *
 /* Window-manager requests (Tk's wm): "pos" (x, y), "minsize"/"maxsize" (w, h:
  * the content's limits in logical px, before the UI scale, as BK_window_new),
  * "resizable" (w, h), "topmost" (a), "alpha" (a), "override" (a), "state"
- * (0 normal, 1 iconic, 2 withdrawn, 3 zoomed), "lift", "lower", "focus". */
+ * (0 normal, 1 iconic, 2 withdrawn, 3 zoomed), "lift", "lower", "focus".
+ * "titlebar" (a): 1 = the host draws the title bar in its content (BK_window_set_areas says
+ * where): Windows drops the caption and keeps the resize borders; macOS keeps the traffic
+ * lights over the content (full-size content view, transparent title bar, no title); other
+ * hosts ignore it. "traffic_lights" (x, y), macOS only: the close button's left edge and
+ * the buttons' vertical centre from the content's top-left (logical px). */
 void BK_window_wm(BKWindow *win, const char *key, double a, double b);
 /* Queries: "pos", "state", "screen" (w, h), "pointer" (x, y), "scale". */
 int BK_window_wm_get(BKWindow *win, const char *key, double *r_a, double *r_b);
@@ -725,6 +730,37 @@ int BK_window_focused(BKWindow *win);
  * token, e.g. from a notification server's ActivationToken signal: Wayland can only raise a
  * window with one (xdg_activation_v1); X11 sets it as _NET_STARTUP_ID first; others ignore it. */
 void BK_window_activate(BKWindow *win, const char *token);
+/* The host draws its own title bar ("titlebar" 1 below): which parts of the window are
+ * the title bar's. Every point in no area is the host's own content (BK_AREA_CLIENT).
+ * BK_AREA_DRAG moves the window (a double click zooms it, or what the system's setting
+ * asks on macOS); BK_AREA_MAX is the host's maximise button, which Windows needs to know
+ * of to offer its snap layouts on hover; the host still gets the button's clicks. */
+enum {
+  BK_AREA_CLIENT = 0,
+  BK_AREA_DRAG = 1,
+  BK_AREA_MIN = 2,
+  BK_AREA_MAX = 3,
+  BK_AREA_CLOSE = 4,
+};
+/* A rectangle of the window's content in device pixels (as BK_press takes them) and its
+ * area. Lists are in paint order: where rectangles overlap, the later one is on top. */
+typedef struct BKWindowArea {
+  float x, y, w, h;
+  int area;
+} BKWindowArea;
+/* Replace the window's areas (copied). Only Windows and macOS hosts use them, and only
+ * after BK_window_wm(win, "titlebar", 1, 0); elsewhere the system draws the title bar. */
+void BK_window_set_areas(BKWindow *win, const BKWindowArea *areas, int count);
+/* The area at (x, y): the last of `areas` that holds the point, else BK_AREA_CLIENT. */
+int BK_areas_at(const BKWindowArea *areas, int count, float x, float y);
+/* What a point of a window with the title bar drawn by its host is to Windows (the answer
+ * to WM_NCHITTEST, before the system's own resize borders on the left, right and bottom):
+ * `area` is BK_areas_at's answer at the point, `y` its distance from the top of the
+ * content, `border` the top resize border's height (all device px). The top border resizes
+ * unless the window is maximised; a drag area is the caption; the maximise button stays
+ * the system's maximise button; the rest is the host's. */
+enum { BK_HIT_CLIENT = 0, BK_HIT_TOP = 1, BK_HIT_CAPTION = 2, BK_HIT_MAXBUTTON = 3 };
+int BK_frame_hit(int area, int y, int border, int maximized);
 /* Message loop: run until every window is closed (or BK_window_quit). */
 void BK_window_run(void);
 int BK_window_pump(void); /* handle pending messages; returns open windows */

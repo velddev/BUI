@@ -700,3 +700,11 @@ void bk_textarea_html_draw(BKNode *n);
 int bk_iround(float v);
 bool bk_streq(const char *a, const char *b);
 bool bk_keysym_is(const char *keysym, const char *name); /* case-insensitive */
+
+/* kit_window_areas.c: a host's copy of its title bar's areas (BK_window_set_areas). */
+typedef struct BKAreas {
+  BKWindowArea *v;
+  int n;
+} BKAreas;
+void bk_areas_set(BKAreas *a, const BKWindowArea *areas, int count);
+void bk_areas_free(BKAreas *a);

@@ -196,6 +196,14 @@ impl Div {
         self
     }
 
+    /// What this element is to an app-drawn title bar (gpui's `window_control_area`): the
+    /// part that moves the window, or its minimise, maximise or close button. Only windows
+    /// opened with [`crate::TitlebarOptions::appears_transparent`] use it, on Windows and
+    /// macOS; see [`crate::chrome`].
+    pub fn window_control_area(self, area: crate::chrome::WindowControlArea) -> Self {
+        self.attr(crate::chrome::ATTR, area.name())
+    }
+
     /// Give this element and everything inside it Blender's look (dark
     /// theme, UI font size, themed links, code, tables ...). Without it,
     /// elements get the browsers' defaults: black text on white, with

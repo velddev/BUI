@@ -438,7 +438,7 @@ pub fn open_window(cx: &mut App, id: u32, config: WindowConfig, sink: Sink) {
             origin: point(px(0.0), px(0.0)),
             size: size(px(config.width.unwrap_or(800.0) as f32), px(config.height.unwrap_or(600.0) as f32)),
         })),
-        titlebar: config.title.map(|t| TitlebarOptions { title: Some(t.into()) }),
+        titlebar: config.title.map(|t| TitlebarOptions { title: Some(t.into()), ..Default::default() }),
         is_resizable: config.resizable,
         gpu: config.gpu,
         ..Default::default()

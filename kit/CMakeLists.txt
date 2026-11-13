@@ -20,6 +20,7 @@ add_library(bui_kit STATIC
   intern/kit_window_win32.c
   intern/kit_window_x11.c
   intern/kit_window_null.c
+  intern/kit_window_areas.c
   intern/kit_icons_svg.c
   intern/kit_regions.c
   intern/kit_nodes.c

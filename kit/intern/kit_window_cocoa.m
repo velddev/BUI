@@ -136,6 +136,10 @@ struct BKWindow {
   int fixed_w, fixed_h;           /* axes the user may not resize (Tk's resizable) */
   int override, disabled, shown;
   NSWindowStyleMask style;    /* framed style ("override" 0 restores it) */
+  int titlebar;               /* "titlebar": content under a transparent title bar */
+  int lights;                 /* "traffic_lights" asked: lights_x, lights_y (logical px) */
+  float lights_x, lights_y;
+  BKAreas areas;              /* BK_window_set_areas */
   NSEventModifierFlags flags; /* modifiers at the last flagsChanged */
   double scroll_x, scroll_y;  /* trackpad scroll not yet sent (points) */
   BKCocoaTimer timers[MAX_TIMERS];
@@ -168,6 +172,8 @@ static void show_cursor(int visible);
 static void post_nudge(void);
 static void handle_key(BUIKitView *v, NSEvent *ev, int press);
 static void handle_flags(BUIKitView *v, NSEventModifierFlags flags);
+static void place_lights(BKWindow *win);
+static int titlebar_mouse_down(BKWindow *win, NSEvent *ev, int x, int y);
 
 static double now_ms(void)
 {
@@ -393,6 +399,9 @@ static CGColorSpaceRef srgb(void)
   }
   int x, y;
   event_px(bk, ev, &x, &y);
+  if (titlebar_mouse_down(bk, ev, x, y)) {
+    return; /* the window moved or zoomed: nothing of the host's was pressed */
+  }
   [[self window] makeFirstResponder:self];
   BK_press(bk->ctx, x, y, mods_of([ev modifierFlags]) | BK_BUTTON1);
 }
@@ -589,6 +598,7 @@ static CGColorSpaceRef srgb(void)
 {
   if (bk) {
     update_size(bk);
+    place_lights(bk); /* AppKit lays the title bar out again */
   }
 }
 
@@ -604,6 +614,7 @@ static CGColorSpaceRef srgb(void)
 {
   if (bk) {
     update_size(bk);
+    place_lights(bk);
   }
 }
 
@@ -1266,6 +1277,67 @@ static void update_size(BKWindow *win)
   }
 }
 
+/* "traffic_lights": the close, minimise and zoom buttons where the host's title bar wants
+ * them (as Electron's trafficLightPosition): the title bar's container grows to twice their
+ * centre's height and they keep their spacing from the close button's x. AppKit lays the
+ * title bar out again on resizes and full screen, so this runs after those. */
+static void place_lights(BKWindow *win)
+{
+  NSWindow *nw = win->nswin;
+  if (!nw || !win->titlebar || !win->lights || ([nw styleMask] & NSWindowStyleMaskFullScreen)) {
+    return;
+  }
+  NSButton *close = [nw standardWindowButton:NSWindowCloseButton];
+  NSButton *mini = [nw standardWindowButton:NSWindowMiniaturizeButton];
+  NSButton *zoom = [nw standardWindowButton:NSWindowZoomButton];
+  NSView *container = [[close superview] superview];
+  if (!close || !mini || !zoom || !container) {
+    return;
+  }
+  const CGFloat k = win->scale / win->px; /* logical px -> points */
+  const CGFloat bh = [close frame].size.height;
+  const CGFloat height = BK_MAX(bh, 2.0 * win->lights_y * k);
+  NSRect c = [container frame];
+  c.size.height = height;
+  c.origin.y = [nw frame].size.height - height;
+  [container setFrame:c];
+  const CGFloat gap = [mini frame].origin.x - [close frame].origin.x;
+  NSButton *buttons[3] = {close, mini, zoom};
+  for (int i = 0; i < 3; i++) {
+    [buttons[i] setFrameOrigin:NSMakePoint(win->lights_x * k + i * gap, (height - bh) / 2.0)];
+  }
+}
+
+/* A press on the host's title bar (BK_window_set_areas' BK_AREA_DRAG): the window moves, or
+ * on a double click does what the system's "double-click a window's title bar" setting asks
+ * (zoom, minimise or nothing). 1 when it was one. */
+static int titlebar_mouse_down(BKWindow *win, NSEvent *ev, int x, int y)
+{
+  if (!win->titlebar || BK_areas_at(win->areas.v, win->areas.n, (float)x, (float)y) !=
+                            BK_AREA_DRAG)
+  {
+    return 0;
+  }
+  NSWindow *nw = win->nswin;
+  if ([ev clickCount] == 2) {
+    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+    NSString *action = [d stringForKey:@"AppleActionOnDoubleClick"];
+    if (!action) {
+      action = [d boolForKey:@"AppleMiniaturizeOnDoubleClick"] ? @"Minimize" : @"Maximize";
+    }
+    if ([action isEqualToString:@"Minimize"]) {
+      [nw performMiniaturize:nil];
+    }
+    else if (![action isEqualToString:@"None"]) {
+      [nw performZoom:nil];
+    }
+  }
+  else {
+    [nw performWindowDragWithEvent:ev];
+  }
+  return 1;
+}
+
 static void on_backing_changed(BKWindow *win)
 {
   const float px = (float)[win->nswin backingScaleFactor];
@@ -1420,7 +1492,13 @@ void BK_window_free(BKWindow *win)
     BK_context_set_host(win->ctx, &win->prev);
   }
   BUI_raster_free(win->raster);
+  bk_areas_free(&win->areas);
   free(win);
+}
+
+void BK_window_set_areas(BKWindow *win, const BKWindowArea *areas, int count)
+{
+  bk_areas_set(&win->areas, areas, count);
 }
 
 void BK_window_set_callbacks(BKWindow *win, const BKWindowCallbacks *cb)
@@ -1656,6 +1734,36 @@ void BK_window_wm(BKWindow *win, const char *key, double a, double b)
     else if (!strcmp(key, "focus")) {
       [NSApp activateIgnoringOtherApps:YES];
       [nw makeKeyAndOrderFront:nil];
+    }
+    else if (!strcmp(key, "titlebar")) {
+      if (win->titlebar == (a != 0.0)) {
+        return;
+      }
+      /* the content keeps its size: the window loses (or gets back) the title bar's height */
+      const NSSize content = [[nw contentView] frame].size;
+      win->titlebar = a != 0.0;
+      if (win->titlebar) {
+        win->style |= NSWindowStyleMaskFullSizeContentView;
+      }
+      else {
+        win->style &= ~NSWindowStyleMaskFullSizeContentView;
+      }
+      if (!win->override) {
+        [nw setStyleMask:win->style];
+        if (!([nw styleMask] & NSWindowStyleMaskFullScreen) && ![nw isZoomed]) {
+          [nw setContentSize:content];
+        }
+      }
+      [nw setTitlebarAppearsTransparent:win->titlebar ? YES : NO];
+      [nw setTitleVisibility:win->titlebar ? NSWindowTitleHidden : NSWindowTitleVisible];
+      update_size(win);
+      place_lights(win);
+    }
+    else if (!strcmp(key, "traffic_lights")) {
+      win->lights = 1;
+      win->lights_x = (float)a;
+      win->lights_y = (float)b;
+      place_lights(win);
     }
   }
 }

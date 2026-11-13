@@ -127,6 +127,7 @@ pub mod styled;
 pub(crate) mod text;
 pub(crate) mod widgets;
 pub mod window;
+pub mod chrome;
 
 pub use blenderui_sys as sys;
 
@@ -139,6 +140,7 @@ pub use paint::{image_stats, set_image_budget, Animation, Image, Painter};
 pub use video::{Video, VideoState};
 pub use styled::{FontWeight, StyleBlock, Styled};
 pub use window::*;
+pub use chrome::WindowControlArea;
 
 /// Whether `class` names also work as Tailwind CSS v4 utilities (`p-4`,
 /// `md:hover:bg-sky-500/50` ...), compiled on first use. On by default;
@@ -246,4 +248,5 @@ pub mod prelude {
     pub use crate::paint::{Image, Painter};
     pub use crate::styled::{FontWeight, StyleBlock, Styled};
     pub use crate::window::*;
+    pub use crate::chrome::WindowControlArea;
 }

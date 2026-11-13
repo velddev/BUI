@@ -222,6 +222,24 @@ pub struct BKWindowCallbacks {
     pub on_frame: Option<unsafe extern "C" fn(data: *mut c_void, win: *mut BKWindow)>,
 }
 
+/// A rectangle of a window's title bar drawn by its host (`BKWindowArea`): device px, and
+/// one of the `BK_AREA_*` values.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BKWindowArea {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    pub area: c_int,
+}
+
+pub const BK_AREA_CLIENT: c_int = 0;
+pub const BK_AREA_DRAG: c_int = 1;
+pub const BK_AREA_MIN: c_int = 2;
+pub const BK_AREA_MAX: c_int = 3;
+pub const BK_AREA_CLOSE: c_int = 4;
+
 unsafe extern "C" {
     // look
     pub fn BK_set_scale(scale: c_float);
@@ -392,6 +410,11 @@ unsafe extern "C" {
     /// Bring the window to the front and focus it; `token` (may be null) is an
     /// xdg-activation token (Wayland).
     pub fn BK_window_activate(win: *mut BKWindow, token: *const c_char);
+    /// The window's title bar areas (copied); Windows and macOS use them after the
+    /// `"titlebar"` request.
+    pub fn BK_window_set_areas(win: *mut BKWindow, areas: *const BKWindowArea, count: c_int);
+    /// The area at (x, y): the last of `areas` holding it, else `BK_AREA_CLIENT`.
+    pub fn BK_areas_at(areas: *const BKWindowArea, count: c_int, x: f32, y: f32) -> c_int;
     pub fn BK_window_run();
     pub fn BK_window_wake_init(cb: Option<unsafe extern "C" fn()>) -> c_int;
     pub fn BK_window_wake();
