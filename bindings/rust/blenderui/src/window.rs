@@ -826,6 +826,8 @@ unsafe extern "C" fn on_frame(data: *mut c_void, _win: *mut sys::BKWindow) {
         app.drain();
         app.with_window(id, |w, app| {
             w.frame_pending = false;
+            // a resize: the kit asks for this frame before drawing at the new size
+            w.take_native_size();
             if w.dirty {
                 w.rebuild(app);
             }
@@ -1003,6 +1005,22 @@ impl Window {
                 sys::BUI_raster_free(self.raster);
                 self.raster = std::ptr::null_mut();
             }
+        }
+    }
+
+    /// Take the native window's size now (device pixels), ahead of the
+    /// configure event the kit's next render would send: the frame about to
+    /// render is then laid out at the size it is drawn at, never the last
+    /// one (centred text would jump back and forth while the window is
+    /// dragged wider or narrower).
+    fn take_native_size(&mut self) {
+        let Some(n) = self.native else { return };
+        let (mut w, mut h) = (0, 0);
+        // SAFETY: a live native window; the size is written into the two ints.
+        unsafe { sys::BK_window_get_size(n, &raw mut w, &raw mut h) };
+        if w > 0 && h > 0 && (w, h) != self.phys {
+            self.phys = (w, h);
+            self.dirty = true;
         }
     }
 

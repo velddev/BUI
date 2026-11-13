@@ -671,7 +671,9 @@ typedef struct BKWindowCallbacks {
   void (*on_timer)(void *data, BKWindow *win, int id); /* BK_window_timer fired */
   int (*on_close)(void *data, BKWindow *win);          /* return 0 to keep it open */
   /* BK_window_request_frame: called right before the frame renders, so a host
-   * can rebuild its UI for exactly the frame that presents it. */
+   * can rebuild its UI for exactly the frame that presents it. Also called before
+   * the first frame at a new size (BK_window_get_size has it), so a host that
+   * lays out by the window's size never shows its last layout at the new one. */
   void (*on_frame)(void *data, BKWindow *win);
 } BKWindowCallbacks;
 int BK_window_supported(void);

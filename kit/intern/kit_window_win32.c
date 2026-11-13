@@ -473,6 +473,16 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
   BKContext *ctx = win->ctx;
   switch (msg) {
     case WM_BK_RENDER:
+      { /* a new size: the host lays out for it before this frame, so no frame shows the
+         * last layout at the new size (centred text would jump back and forth) */
+        RECT rc;
+        GetClientRect(win->hwnd, &rc);
+        if (win->cb.on_frame && (BUI_raster_width(win->raster) != BK_MAX(1, rc.right - rc.left) ||
+                                 BUI_raster_height(win->raster) != BK_MAX(1, rc.bottom - rc.top)))
+        {
+          win->want_frame = 1;
+        }
+      }
       if (win->want_frame && win->cb.on_frame) {
         /* render_pending is still set: edits made here join this frame */
         win->want_frame = 0;
