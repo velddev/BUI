@@ -794,6 +794,19 @@ impl App {
         }
     }
 
+    /// Change the scale to `scale` device pixels per logical pixel, as Windows'
+    /// `WM_DPICHANGED` does (the kit's scale, and the window resized to keep its
+    /// logical size): the next frame is laid out and drawn at it.
+    pub fn simulate_scale_change(&mut self, window: WindowId, scale: f32) {
+        // SAFETY: sets the kit's global scale, between frames on this thread.
+        unsafe { sys::BK_set_scale(scale) };
+        if let Some(win) = self.windows.get_mut(window.0).and_then(|w| w.as_deref_mut()) {
+            let (w, h) = (win.phys.0 as f32 / win.scale, win.phys.1 as f32 / win.scale);
+            win.phys = ((w * scale).round() as i32, (h * scale).round() as i32);
+            win.follow_scale(scale);
+        }
+    }
+
     /// Focus (`true`) or unfocus a headless window, as a desktop's focus change does:
     /// [`Window::is_active`] reports it and the window re-renders.
     pub fn simulate_activation(&mut self, window: WindowId, active: bool) {
@@ -865,6 +878,8 @@ unsafe extern "C" fn on_frame(data: *mut c_void, _win: *mut sys::BKWindow) {
             w.frame_pending = false;
             // a resize: the kit asks for this frame before drawing at the new size
             w.take_native_size();
+            // a DPI change (Windows' WM_DPICHANGED: another monitor, a new scale setting)
+            w.take_native_scale();
             // focus in / out: the kit renders a frame for it, rebuild so views see it
             let active = w.is_active();
             if active != w.active {
@@ -1073,6 +1088,31 @@ impl Window {
             self.phys = (w, h);
             self.dirty = true;
         }
+    }
+
+    /// Take the kit's scale now: a native host changes it on its own (Windows'
+    /// `WM_DPICHANGED` when the window moves to another monitor or the scale
+    /// setting changes), and the kit's own widgets (text boxes) draw at it at
+    /// once. Laid out at the old scale, CSS text kept its size while a text box's
+    /// text grew or shrank with the new one.
+    fn take_native_scale(&mut self) {
+        if self.native.is_none() {
+            return;
+        }
+        // SAFETY: reads the kit's global scale.
+        self.follow_scale(unsafe { sys::BK_scale() }.max(0.5));
+    }
+
+    /// Lay out and draw at `scale` device pixels per logical pixel from the next
+    /// frame: text is measured again at the new device size.
+    fn follow_scale(&mut self, scale: f32) {
+        if (scale - self.scale).abs() < 1e-4 {
+            return;
+        }
+        self.scale = scale;
+        self.caches.text.set_scale(scale);
+        self.caches.taffy.clear_caches();
+        self.dirty = true;
     }
 
     /// Whether the window has the keyboard focus; `None` when the backend can't tell (and in
@@ -1677,6 +1717,8 @@ impl Window {
     }
 
     fn dispatch(&mut self, ev: RawEvent, app: &mut App) {
+        // events after a DPI change come in device pixels at the new scale
+        self.take_native_scale();
         if ev.node != self.canvas {
             self.widget_event(ev, app);
             return;

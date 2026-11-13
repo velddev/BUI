@@ -521,8 +521,10 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       BK_window_request_frame(win, 0);
       break; /* DefWindowProc sets the keyboard focus */
     case WM_DPICHANGED: {
-      win->scale = HIWORD(wp) / 96.0f;
+      /* the window's scale follows the monitor unless BUI_UI_SCALE pins it; the
+       * Rust layer takes the new scale on its next frame (Window::take_native_scale) */
       if (!getenv("BUI_UI_SCALE")) {
+        win->scale = HIWORD(wp) / 96.0f;
         BK_set_scale(win->scale);
       }
       const RECT *r = (const RECT *)lp;

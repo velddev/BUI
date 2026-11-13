@@ -132,6 +132,13 @@ impl<C> LayoutTree<C> {
         n.cache.clear();
     }
 
+    /// Forget every node's cached layout (text measured at another scale).
+    pub fn clear_caches(&mut self) {
+        for n in &mut self.nodes {
+            n.cache.clear();
+        }
+    }
+
     pub fn mark_dirty(&mut self, id: NodeId) {
         self.nodes[ix(id)].cache.clear();
     }
