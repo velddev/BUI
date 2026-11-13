@@ -8,8 +8,10 @@
 //! is measured with a per-byte advance table filled lazily from the host's
 //! text measurement, so a message costs a table lookup per byte instead of
 //! a call into the shaper. Other characters are measured one by one by the
-//! host (and remembered); the host still shapes the finished lines when it
-//! paints. Text in several faces ([`wrap_fonts`]) is measured face by face.
+//! host (and remembered), an emoji sequence ([`cluster_end`]: a man, a zero
+//! width joiner and a bald head are one bald man) as one; the host still
+//! shapes the finished lines when it paints. Text in several faces
+//! ([`wrap_fonts`]) is measured face by face.
 
 use std::collections::HashMap;
 
@@ -50,11 +52,12 @@ pub struct Advances {
     size: f32,
     ascii: [[f32; 128]; Font::ALL.len()],
     other: HashMap<(char, Font), f32>,
+    seqs: HashMap<(Box<str>, Font), f32>,
 }
 
 impl Default for Advances {
     fn default() -> Self {
-        Self { size: 0.0, ascii: [[f32::NAN; 128]; Font::ALL.len()], other: HashMap::new() }
+        Self { size: 0.0, ascii: [[f32::NAN; 128]; Font::ALL.len()], other: HashMap::new(), seqs: HashMap::new() }
     }
 }
 
@@ -64,6 +67,7 @@ impl Advances {
         self.size = size;
         self.ascii = [[f32::NAN; 128]; Font::ALL.len()];
         self.other.clear();
+        self.seqs.clear();
     }
 
     #[must_use]
@@ -85,6 +89,50 @@ impl Advances {
             *self.other.entry((c, font)).or_insert_with(|| measure(c))
         }
     }
+
+    /// The advance of `s`, one character as it is drawn (an emoji sequence).
+    fn of_seq(&mut self, s: &str, font: Font, tw: FontWidth<'_>) -> f32 {
+        let mut chars = s.chars();
+        if let (Some(c), None) = (chars.next(), chars.next()) {
+            return self.of(c, font, tw);
+        }
+        let size = self.size;
+        *self.seqs.entry((Box::from(s), font)).or_insert_with(|| tw(s, size, font).max(0.0))
+    }
+}
+
+/// A regional indicator (two make a flag).
+const fn is_regional(c: char) -> bool {
+    matches!(c, '\u{1F1E6}'..='\u{1F1FF}')
+}
+
+/// Whether `c` joins the character before it (`prev`) into one drawn
+/// character: a zero width joiner and what follows one, a variation
+/// selector, a skin tone, a keycap, an emoji tag.
+const fn joins(prev: char, c: char) -> bool {
+    (prev == '\u{200D}' && c != '\n')
+        || matches!(c, '\u{200D}' | '\u{20E3}' | '\u{FE00}'..='\u{FE0F}' | '\u{1F3FB}'..='\u{1F3FF}' | '\u{E0020}'..='\u{E007F}')
+}
+
+/// The end (byte offset) of the character starting at byte `i` of `text` as
+/// the text engine draws it: an emoji sequence (U+1F468 U+200D U+1F9B2, a
+/// bald man; a skin tone; a keycap; a flag's pair of regional indicators) is
+/// one, so it is measured whole and never broken.
+#[must_use]
+pub fn cluster_end(text: &str, i: usize) -> usize {
+    let mut it = text[i..].char_indices();
+    let Some((_, first)) = it.next() else { return i };
+    let mut end = i + first.len_utf8();
+    let mut prev = first;
+    for (o, c) in it {
+        let pair = is_regional(first) && is_regional(c) && o == first.len_utf8();
+        if !pair && !joins(prev, c) {
+            break;
+        }
+        end = i + o + c.len_utf8();
+        prev = c;
+    }
+    end
 }
 
 /// Wrap `text` to `max_w` px: break after spaces, at newlines, and inside a
@@ -102,32 +150,42 @@ pub fn wrap_fonts(text: &str, max_w: f32, fonts: &[(usize, Font)], adv: &mut Adv
     let (mut line_w, mut line_start) = (0.0f32, 0usize);
     // the best place to break: byte offset after the last space, and the width up to it
     let mut brk: Option<(usize, f32)> = None;
-    for (i, c) in text.char_indices() {
+    let mut i = 0;
+    while let Some(c) = text[i..].chars().next() {
         while let Some(&(_, f)) = next.next_if(|(at, _)| *at <= i) {
             font = f;
         }
+        // one drawn character: a code point, or an emoji sequence (ASCII only
+        // starts one before a keycap's U+FE0F or U+20E3, non-ASCII bytes)
+        let end = if text.as_bytes().get(i + 1).is_some_and(|b| *b >= 0x80) || !c.is_ascii() {
+            cluster_end(text, i)
+        } else {
+            i + 1
+        };
+        let at = i;
+        i = end;
         if c == '\n' {
-            starts.push((i + 1) as u32);
-            (line_w, line_start, brk) = (0.0, i + 1, None);
+            starts.push((at + 1) as u32);
+            (line_w, line_start, brk) = (0.0, at + 1, None);
             continue;
         }
-        let w = adv.of(c, font, tw);
+        let w = if end - at > c.len_utf8() { adv.of_seq(&text[at..end], font, tw) } else { adv.of(c, font, tw) };
         if c == ' ' || c == '\t' {
             // trailing blanks may hang past the edge
             line_w += w;
-            brk = Some((i + 1, line_w));
+            brk = Some((at + 1, line_w));
             continue;
         }
-        if line_w + w > max_w && i > line_start {
+        if line_w + w > max_w && at > line_start {
             match brk {
-                Some((at, w_at)) if at > line_start => {
-                    starts.push(at as u32);
-                    line_start = at;
-                    line_w -= w_at;
+                Some((b, w_b)) if b > line_start => {
+                    starts.push(b as u32);
+                    line_start = b;
+                    line_w -= w_b;
                 }
                 _ => {
-                    starts.push(i as u32);
-                    line_start = i;
+                    starts.push(at as u32);
+                    line_start = at;
                     line_w = 0.0;
                 }
             }
@@ -192,6 +250,46 @@ mod tests {
         assert_eq!(lines, ["aaaa ", "bbbb ", "cccc"]);
         // the same text all regular fits on fewer lines
         assert_eq!(wrap_fonts(text, 60.0, &[], &mut adv, &mut tw).count(), 2);
+    }
+
+    /// Emoji sequences are one character to the wrap, as they are one glyph
+    /// to the text engine: measured whole (once, by the host), never broken.
+    #[test]
+    fn emoji_sequences_are_measured_whole() {
+        let bald = "\u{1F468}\u{200D}\u{1F9B2}";
+        let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+        let flags = "\u{1F1FA}\u{1F1F8}\u{1F1EB}\u{1F1F7}";
+        let keycap = "1\u{FE0F}\u{20E3}";
+        let thumbs = "\u{1F44D}\u{1F3FD}";
+        let text = format!("{bald}{family}{flags}{keycap}{thumbs}x");
+        let mut ends = vec![];
+        let mut i = 0;
+        while i < text.len() {
+            i = cluster_end(&text, i);
+            ends.push(i);
+        }
+        let mut want = vec![];
+        let mut at = 0;
+        for part in [bald, family, "\u{1F1FA}\u{1F1F8}", "\u{1F1EB}\u{1F1F7}", keycap, thumbs, "x"] {
+            at += part.len();
+            want.push(at);
+        }
+        assert_eq!(ends, want);
+        // a host that draws a sequence as one 10 px glyph: five fit in 50 px
+        let mut seen = vec![];
+        let mut tw = |s: &str, _: f32| {
+            seen.push(s.to_owned());
+            10.0
+        };
+        let line = format!("{bald}{bald}{bald}{bald}{bald}");
+        let mut adv = Advances::default();
+        adv.reset(10.0);
+        assert_eq!(wrap(&line, 50.0, &mut adv, &mut tw).count(), 1);
+        assert_eq!(seen, [bald], "measured once, whole");
+        // a long run breaks between sequences, never inside one
+        let l = wrap(&format!("{line}{line}"), 50.0, &mut adv, &mut |_, _| 10.0);
+        assert_eq!(l.count(), 2);
+        assert_eq!(l.line(&format!("{line}{line}"), 1), line);
     }
 
     #[test]

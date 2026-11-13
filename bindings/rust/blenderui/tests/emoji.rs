@@ -7,6 +7,10 @@ use blenderui::prelude::*;
 
 const TEXT: &str = "Hello \u{1F914} \u{1F600} \u{2764}\u{FE0F} \u{1F44D} world :)";
 
+/// Sequences the emoji face joins: bald man, woman with red hair, thumbs up with a tone,
+/// woman technologist, family, kiss with two tones, keycap, pirate flag.
+const JOINED: &str = "\u{1F468}\u{200D}\u{1F9B2}|\u{1F469}\u{200D}\u{1F9B0}|\u{1F44D}\u{1F3FB}|\u{1F469}\u{200D}\u{1F4BB}|\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}|\u{1F469}\u{1F3FD}\u{200D}\u{2764}\u{FE0F}\u{200D}\u{1F48B}\u{200D}\u{1F468}\u{1F3FB}|1\u{FE0F}\u{20E3}|\u{1F3F4}\u{200D}\u{2620}\u{FE0F}|";
+
 fn font() -> Option<Vec<u8>> {
     let home = std::env::var("HOME").ok()?;
     std::fs::read(format!("{home}/.local/share/fonts/windows/seguiemj.ttf")).ok()
@@ -31,6 +35,7 @@ impl Render for Page {
             div().style("display: flex; flex-direction: column; gap: 10px")
                 .child(div().id("small").style("font-size: 14px").child(TEXT))
                 .child(div().id("large").style("font-size: 32px").child(TEXT))
+                .child(div().id("joined").style("font-size: 32px").child(JOINED))
                 .child(textarea().id("area").attr("rows", "2").style("font-size: 20px").value(TEXT)),
         )
     }
@@ -94,9 +99,32 @@ fn emoji_fallback_in_div_and_textarea() {
     let heart = measure("\u{2764}", 32.0);
     let heart_emoji = measure("\u{2764}\u{FE0F}", 32.0);
     assert!(heart > 0.0 && heart_emoji > heart, "heart {heart} emoji {heart_emoji}");
+    // sequences the emoji face joins (its GSUB ligatures) are one emoji wide, not two:
+    // hair components, skin tones, professions, families, keycaps, couples
+    for seq in [
+        "\u{1F468}\u{200D}\u{1F9B2}",                         // bald man
+        "\u{1F469}\u{200D}\u{1F9B0}",                         // woman, red hair
+        "\u{1F9D1}\u{1F3FD}\u{200D}\u{1F9B2}",               // person, medium skin, bald
+        "\u{1F44D}\u{1F3FB}",                                  // thumbs up, light skin
+        "\u{1F469}\u{200D}\u{1F4BB}",                         // woman technologist
+        "\u{1F3C3}\u{200D}\u{2642}\u{FE0F}",                 // man running
+        "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}", // family (parts, GPOS)
+        "\u{1F469}\u{1F3FD}\u{200D}\u{2764}\u{FE0F}\u{200D}\u{1F48B}\u{200D}\u{1F468}\u{1F3FB}", // kiss, two tones
+        "\u{1F3F4}\u{200D}\u{2620}\u{FE0F}",                 // pirate flag
+        "\u{2764}\u{FE0F}\u{200D}\u{1F525}",                 // heart on fire
+        "#\u{FE0F}\u{20E3}",                                   // keycap
+        "1\u{FE0F}\u{20E3}",
+    ] {
+        // (Segoe UI Emoji's families are a little narrower than one emoji, as HarfBuzz has them)
+        let w = measure(seq, 32.0);
+        assert!(w > em * 0.85 && w < em * 1.1, "{seq:?} is {w} wide, one emoji is {em}");
+    }
+    // a joiner nothing joins changes nothing: two emoji side by side
+    let apart = measure("\u{1F914}\u{200D}\u{1F914}", 32.0);
+    assert!((apart - 2.0 * em).abs() < 2.0, "apart {apart} em {em}");
 
     Application::headless().run(|cx| {
-        let win = open(cx, 520.0, 220.0, Page);
+        let win = open(cx, 520.0, 280.0, Page);
         let id = win.id;
         let img = cx.draw(id);
         let s = img.0 as f32 / 520.0;

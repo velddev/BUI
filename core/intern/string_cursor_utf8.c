@@ -134,6 +134,46 @@ static eStrCursorDelimType cursor_delim_type_utf8(const char *ch_utf8,
   return cursor_delim_type_unicode(uch);
 }
 
+/* Emoji sequences are one character to the cursor (as their glyph is one, see
+ * gpu_raster.c's glyph walk): whether the character at `ch` belongs to the
+ * one before it, past what zero width already joins: the character after a
+ * zero width joiner (U+200D), a skin tone modifier, the second of a pair of
+ * regional indicators (a flag). `from` is where a step forward started (a
+ * flag's first indicator), NULL stepping back (pairs counted from the
+ * run's start). */
+static bool cursor_is_ri(uint c)
+{
+  return c >= 0x1F1E6 && c <= 0x1F1FF;
+}
+
+static bool cursor_joined_utf8(const char *str, const char *from, const char *ch)
+{
+  if (ch <= str) {
+    return false;
+  }
+  const char *prev = BLI_str_find_prev_char_utf8(ch, str);
+  const uint c = BLI_str_utf8_as_unicode_or_error(ch);
+  const uint p = BLI_str_utf8_as_unicode_or_error(prev);
+  if (p == 0x200D || (c >= 0x1F3FB && c <= 0x1F3FF)) {
+    return c != BLI_UTF8_ERR && c != 0;
+  }
+  if (!cursor_is_ri(c) || !cursor_is_ri(p)) {
+    return false;
+  }
+  if (from) {
+    return prev == from;
+  }
+  /* stepping back: `ch` is a flag's second when an odd number of indicators come before it */
+  int n = 0;
+  for (const char *q = prev; cursor_is_ri(BLI_str_utf8_as_unicode_or_error(q)); q = BLI_str_find_prev_char_utf8(q, str)) {
+    n++;
+    if (q == str) {
+      break;
+    }
+  }
+  return n % 2 == 1;
+}
+
 bool BLI_str_cursor_step_next_utf8(const char *str, const int str_maxlen, int *pos)
 {
   /* NOTE: Keep in sync with #BLI_str_cursor_step_next_utf32. */
@@ -149,7 +189,8 @@ bool BLI_str_cursor_step_next_utf8(const char *str, const int str_maxlen, int *p
   do {
     str_next = BLI_str_find_next_char_utf8(str_next, str_end);
   } while ((str_next < str_end) && (str_next[0] != 0) &&
-           (BLI_str_utf8_char_width_or_error(str_next) == 0));
+           ((BLI_str_utf8_char_width_or_error(str_next) == 0) ||
+            cursor_joined_utf8(str, str_pos, str_next)));
   *pos += (int)(str_next - str_pos);
   *pos = MIN2(*pos, str_maxlen);
 
@@ -167,7 +208,8 @@ bool BLI_str_cursor_step_prev_utf8(const char *str, const int str_maxlen, int *p
     const char *str_prev = str_pos;
     do {
       str_prev = BLI_str_find_prev_char_utf8(str_prev, str);
-    } while ((str_prev > str) && (BLI_str_utf8_char_width_or_error(str_prev) == 0));
+    } while ((str_prev > str) && ((BLI_str_utf8_char_width_or_error(str_prev) == 0) ||
+                                  cursor_joined_utf8(str, NULL, str_prev)));
     *pos -= (int)(str_pos - str_prev);
     return true;
   }

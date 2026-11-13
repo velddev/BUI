@@ -4030,6 +4030,436 @@ static float glyph_advance(const FontSlot *s, int glyph)
   return s->scale * (float)adv + s->embolden;
 }
 
+/* Emoji sequences (ZWJ sequences, skin tones, keycaps, families, couples):
+ * the emoji face's own OpenType layout applied to each run of glyphs the walk
+ * takes from it, so U+1F468 U+200D U+1F9B2 draws as one bald man rather than
+ * a man and a bald head. GSUB features `ccmp`, `liga`, `clig`, `rlig`: single
+ * (1), ligature (4), chained context by coverage (6.3), extension (7). GPOS
+ * features `dist`, `mark`, `mkmk` (Segoe UI Emoji builds families and
+ * mixed-tone couples from parts placed this way): single adjustment (1),
+ * mark to base (4), mark to mark (6), chained context by coverage (8.3),
+ * extension (9), horizontally only. Other lookup types and lookup flags are
+ * skipped. A minimal shaper: enough for colour emoji fonts, not for complex
+ * scripts, and only ever used on the emoji face. */
+
+/* A glyph of a walk: its slot and id; for a format character (joiner,
+ * keycap, tag) the id it came in as, so one no ligature took can be dropped;
+ * then GPOS's horizontal adjustments in font units (placement, advance) and
+ * the glyph it is attached to, `back` glyphs before it (0: none). */
+typedef struct WalkGlyph {
+  const FontSlot *s;
+  int glyph;
+  int fmt;
+  int dx, dadv, back;
+  float x;
+} WalkGlyph;
+
+#  define OT_LOOKUPS_MAX 128
+
+/* A face's GSUB or GPOS: the table's offset (0 = none) and the lookups of
+ * the features read, in lookup-list order. Read once per face. */
+typedef struct OtLayout {
+  int read;
+  uint32_t table;
+  int n;
+  uint16_t lookups[OT_LOOKUPS_MAX];
+} OtLayout;
+static OtLayout g_layout[2][MAX_FACES]; /* [0] GSUB, [1] GPOS */
+
+static int ot_u16(const uint8_t *d, uint32_t o)
+{
+  return (d[o] << 8) | d[o + 1];
+}
+
+static int ot_s16(const uint8_t *d, uint32_t o)
+{
+  return (int16_t)ot_u16(d, o);
+}
+
+static uint32_t ot_u32(const uint8_t *d, uint32_t o)
+{
+  return ((uint32_t)d[o] << 24) | ((uint32_t)d[o + 1] << 16) | ((uint32_t)d[o + 2] << 8) | d[o + 3];
+}
+
+/* Glyph `g`'s index in the coverage table at `o`, -1 when it isn't covered. */
+static int ot_coverage(const uint8_t *d, uint32_t o, int g)
+{
+  const int fmt = ot_u16(d, o), n = ot_u16(d, o + 2);
+  int lo = 0, hi = n - 1;
+  while (lo <= hi) {
+    const int mid = (lo + hi) / 2;
+    if (fmt == 1) {
+      const int v = ot_u16(d, o + 4 + (uint32_t)mid * 2);
+      if (v == g) {
+        return mid;
+      }
+      if (v < g) {
+        lo = mid + 1;
+      }
+      else {
+        hi = mid - 1;
+      }
+    }
+    else if (fmt == 2) {
+      const uint32_t r = o + 4 + (uint32_t)mid * 6;
+      const int start = ot_u16(d, r), end = ot_u16(d, r + 2);
+      if (g < start) {
+        hi = mid - 1;
+      }
+      else if (g > end) {
+        lo = mid + 1;
+      }
+      else {
+        return ot_u16(d, r + 4) + g - start;
+      }
+    }
+    else {
+      return -1;
+    }
+  }
+  return -1;
+}
+
+/* Glyph `g`'s class in the class definition at `o` (0 when none). */
+static int ot_class(const uint8_t *d, uint32_t o, int g)
+{
+  const int fmt = ot_u16(d, o);
+  if (fmt == 1) {
+    const int start = ot_u16(d, o + 2), n = ot_u16(d, o + 4);
+    return g >= start && g < start + n ? ot_u16(d, o + 6 + (uint32_t)(g - start) * 2) : 0;
+  }
+  if (fmt == 2) {
+    int lo = 0, hi = ot_u16(d, o + 2) - 1;
+    while (lo <= hi) {
+      const int mid = (lo + hi) / 2;
+      const uint32_t r = o + 4 + (uint32_t)mid * 6;
+      if (g < ot_u16(d, r)) {
+        hi = mid - 1;
+      }
+      else if (g > ot_u16(d, r + 2)) {
+        lo = mid + 1;
+      }
+      else {
+        return ot_u16(d, r + 4);
+      }
+    }
+  }
+  return 0;
+}
+
+static int ot_tag(const uint8_t *d, uint32_t o, const char *tags)
+{
+  for (const char *t = tags; *t; t += 4) {
+    if (memcmp(d + o, t, 4) == 0) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static const OtLayout *face_layout(int face, int gpos)
+{
+  OtLayout *gi = &g_layout[gpos][face];
+  if (gi->read) {
+    return gi;
+  }
+  gi->read = 1;
+  const stbtt_fontinfo *info = &g_faces[face].info;
+  const uint8_t *d = info->data;
+  const uint32_t t = stbtt__find_table((stbtt_uint8 *)info->data, (stbtt_uint32)info->fontstart,
+                                       gpos ? "GPOS" : "GSUB");
+  if (!t) {
+    return gi;
+  }
+  const char *features = gpos ? "distmarkmkmk" : "ccmpligacligrlig";
+  /* the default script (DFLT, else latn, else the first) and its default language */
+  const uint32_t scripts = t + (uint32_t)ot_u16(d, t + 4);
+  const int nscripts = ot_u16(d, scripts);
+  uint32_t script = 0;
+  for (int pass = 0; pass < 3 && !script; pass++) {
+    for (int i = 0; i < nscripts && !script; i++) {
+      const uint32_t r = scripts + 2 + (uint32_t)i * 6;
+      if (pass == 2 || ot_tag(d, r, pass == 0 ? "DFLT" : "latn")) {
+        script = scripts + (uint32_t)ot_u16(d, r + 4);
+      }
+    }
+  }
+  if (!script || !ot_u16(d, script)) {
+    return gi;
+  }
+  const uint32_t lang = script + (uint32_t)ot_u16(d, script);
+  const uint32_t flist = t + (uint32_t)ot_u16(d, t + 6);
+  const int nlookups = ot_u16(d, t + (uint32_t)ot_u16(d, t + 8)); /* the lookup list's count */
+  static uint8_t used[8192]; /* lookup indices, as bits (walks run on one thread) */
+  memset(used, 0, sizeof(used));
+  const int nf = ot_u16(d, lang + 4);
+  for (int i = 0; i < nf; i++) {
+    const int fi = ot_u16(d, lang + 6 + (uint32_t)i * 2);
+    const uint32_t r = flist + 2 + (uint32_t)fi * 6;
+    if (!ot_tag(d, r, features)) {
+      continue;
+    }
+    const uint32_t f = flist + (uint32_t)ot_u16(d, r + 4);
+    const int nl = ot_u16(d, f + 2);
+    for (int j = 0; j < nl; j++) {
+      const int li = ot_u16(d, f + 4 + (uint32_t)j * 2);
+      if (li < nlookups) {
+        used[li >> 3] |= (uint8_t)(1 << (li & 7));
+      }
+    }
+  }
+  for (int li = 0; li < nlookups && gi->n < OT_LOOKUPS_MAX; li++) {
+    if (used[li >> 3] & (1 << (li & 7))) {
+      gi->lookups[gi->n++] = (uint16_t)li;
+    }
+  }
+  gi->table = t;
+  return gi;
+}
+
+/* A run being shaped: the face's data, the table, which one, the glyphs. */
+typedef struct OtRun {
+  const uint8_t *d;
+  uint32_t t;
+  int gpos;
+  uint32_t gdef_classes; /* GDEF's glyph classes (3 = mark), 0 when none */
+  WalkGlyph *g;
+  int n;
+} OtRun;
+
+static int ot_apply_at(OtRun *r, int lookup, int pos, int *r_len, int depth);
+
+/* A value record's horizontal parts (font units) and its size in bytes. */
+static int ot_value(const uint8_t *d, uint32_t o, int fmt, int *r_dx, int *r_dadv)
+{
+  int at = 0;
+  *r_dx = *r_dadv = 0;
+  for (int bit = 0; bit < 8; bit++) {
+    if (fmt & (1 << bit)) {
+      if (bit == 0) {
+        *r_dx = ot_s16(d, o + (uint32_t)at);
+      }
+      else if (bit == 2) {
+        *r_dadv = ot_s16(d, o + (uint32_t)at);
+      }
+      at += 2;
+    }
+  }
+  return at;
+}
+
+static int ot_is_mark(const OtRun *r, int i)
+{
+  return r->gdef_classes && ot_class(r->d, r->gdef_classes, r->g[i].glyph) == 3;
+}
+
+/* `glyph` at `at` attached to the glyph `base` (before it) by the anchors
+ * at `mark_anchor` and `base_anchor`. */
+static void ot_attach(OtRun *r, int at, int base, uint32_t mark_anchor, uint32_t base_anchor)
+{
+  r->g[at].back = at - base;
+  r->g[at].dx = ot_s16(r->d, base_anchor + 2) - ot_s16(r->d, mark_anchor + 2);
+}
+
+/* One subtable of type `type` at `o` on glyph `pos`: whether it applied, and
+ * how many glyphs it consumed (`*r_len`, after any ligature). */
+static int ot_subtable(OtRun *r, int type, uint32_t o, int pos, int *r_len, int depth)
+{
+  const uint8_t *d = r->d;
+  WalkGlyph *g = r->g;
+  const int fmt = ot_u16(d, o);
+  *r_len = 1;
+  if (type == (r->gpos ? 9 : 7) && fmt == 1) { /* extension: the real subtable, 32-bit offset */
+    return ot_subtable(r, ot_u16(d, o + 2), o + ot_u32(d, o + 4), pos, r_len, depth);
+  }
+  if (type == (r->gpos ? 8 : 6) && fmt == 3) { /* chained context, by coverage */
+    uint32_t p = o + 2;
+    const int nb = ot_u16(d, p);
+    if (pos < nb) {
+      return 0;
+    }
+    for (int i = 0; i < nb; i++) {
+      if (ot_coverage(d, o + (uint32_t)ot_u16(d, p + 2 + (uint32_t)i * 2), g[pos - 1 - i].glyph) < 0) {
+        return 0;
+      }
+    }
+    p += 2 + (uint32_t)nb * 2;
+    const int ni = ot_u16(d, p);
+    const uint32_t in = p;
+    p += 2 + (uint32_t)ni * 2;
+    const int na = ot_u16(d, p);
+    if (ni < 1 || pos + ni + na > r->n) {
+      return 0;
+    }
+    for (int i = 0; i < ni; i++) {
+      if (ot_coverage(d, o + (uint32_t)ot_u16(d, in + 2 + (uint32_t)i * 2), g[pos + i].glyph) < 0) {
+        return 0;
+      }
+    }
+    for (int i = 0; i < na; i++) {
+      if (ot_coverage(d, o + (uint32_t)ot_u16(d, p + 2 + (uint32_t)i * 2), g[pos + ni + i].glyph) < 0) {
+        return 0;
+      }
+    }
+    p += 2 + (uint32_t)na * 2;
+    const int nrec = ot_u16(d, p);
+    int len = ni; /* the input, as nested ligatures shorten it */
+    for (int i = 0; i < nrec && depth < 4; i++) {
+      const int at = ot_u16(d, p + 2 + (uint32_t)i * 4);
+      if (at < len) {
+        const int before = r->n;
+        int used;
+        ot_apply_at(r, ot_u16(d, p + 4 + (uint32_t)i * 4), pos + at, &used, depth + 1);
+        len -= before - r->n;
+      }
+    }
+    *r_len = len > 0 ? len : 1;
+    return 1;
+  }
+  if (r->gpos) {
+    if (type == 1) { /* single adjustment */
+      const int ci = ot_coverage(d, o + (uint32_t)ot_u16(d, o + 2), g[pos].glyph);
+      const int vf = ot_u16(d, o + 4);
+      int dx, dadv;
+      if (ci < 0) {
+        return 0;
+      }
+      if (fmt == 1) {
+        ot_value(d, o + 6, vf, &dx, &dadv);
+      }
+      else if (fmt == 2 && ci < ot_u16(d, o + 6)) {
+        const int size = ot_value(d, o + 8, vf, &dx, &dadv);
+        ot_value(d, o + 8 + (uint32_t)(ci * size), vf, &dx, &dadv);
+      }
+      else {
+        return 0;
+      }
+      g[pos].dx += dx;
+      g[pos].dadv += dadv;
+      return 1;
+    }
+    if ((type == 4 || type == 6) && fmt == 1) { /* mark to base, mark to mark */
+      const int mi = ot_coverage(d, o + (uint32_t)ot_u16(d, o + 2), g[pos].glyph);
+      if (mi < 0) {
+        return 0;
+      }
+      int base = pos - 1;
+      while (type == 4 && base >= 0 && ot_is_mark(r, base)) {
+        base--;
+      }
+      const int bi = base >= 0 ? ot_coverage(d, o + (uint32_t)ot_u16(d, o + 4), g[base].glyph) : -1;
+      const int classes = ot_u16(d, o + 6);
+      const uint32_t marks = o + (uint32_t)ot_u16(d, o + 8), bases = o + (uint32_t)ot_u16(d, o + 10);
+      if (bi < 0 || mi >= ot_u16(d, marks) || bi >= ot_u16(d, bases)) {
+        return 0;
+      }
+      const int cls = ot_u16(d, marks + 2 + (uint32_t)mi * 4);
+      const int ma = ot_u16(d, marks + 4 + (uint32_t)mi * 4);
+      const int ba = cls < classes ? ot_u16(d, bases + 2 + (uint32_t)(bi * classes + cls) * 2) : 0;
+      if (!ma || !ba) {
+        return 0;
+      }
+      ot_attach(r, pos, base, marks + (uint32_t)ma, bases + (uint32_t)ba);
+      return 1;
+    }
+    return 0;
+  }
+  if (type == 1) { /* single */
+    const int ci = ot_coverage(d, o + (uint32_t)ot_u16(d, o + 2), g[pos].glyph);
+    if (ci < 0) {
+      return 0;
+    }
+    if (fmt == 1) {
+      g[pos].glyph = (g[pos].glyph + ot_s16(d, o + 4)) & 0xFFFF;
+    }
+    else if (fmt == 2 && ci < ot_u16(d, o + 4)) {
+      g[pos].glyph = ot_u16(d, o + 6 + (uint32_t)ci * 2);
+    }
+    else {
+      return 0;
+    }
+    g[pos].fmt = 0;
+    return 1;
+  }
+  if (type == 4 && fmt == 1) { /* ligature: the first that matches (the font puts longer first) */
+    const int ci = ot_coverage(d, o + (uint32_t)ot_u16(d, o + 2), g[pos].glyph);
+    if (ci < 0 || ci >= ot_u16(d, o + 4)) {
+      return 0;
+    }
+    const uint32_t set = o + (uint32_t)ot_u16(d, o + 6 + (uint32_t)ci * 2);
+    const int nlig = ot_u16(d, set);
+    for (int i = 0; i < nlig; i++) {
+      const uint32_t lig = set + (uint32_t)ot_u16(d, set + 2 + (uint32_t)i * 2);
+      const int comps = ot_u16(d, lig + 2);
+      if (comps < 1 || pos + comps > r->n) {
+        continue;
+      }
+      int k = 1;
+      while (k < comps && g[pos + k].glyph == ot_u16(d, lig + 4 + (uint32_t)(k - 1) * 2)) {
+        k++;
+      }
+      if (k == comps) {
+        g[pos].glyph = ot_u16(d, lig);
+        g[pos].fmt = 0;
+        memmove(g + pos + 1, g + pos + comps, sizeof(WalkGlyph) * (size_t)(r->n - pos - comps));
+        r->n -= comps - 1;
+        return 1;
+      }
+    }
+  }
+  return 0;
+}
+
+/* Lookup `lookup` at glyph `pos`: its first subtable that applies. */
+static int ot_apply_at(OtRun *r, int lookup, int pos, int *r_len, int depth)
+{
+  const uint32_t list = r->t + (uint32_t)ot_u16(r->d, r->t + 8);
+  if (lookup >= ot_u16(r->d, list)) {
+    return 0;
+  }
+  const uint32_t l = list + (uint32_t)ot_u16(r->d, list + 2 + (uint32_t)lookup * 2);
+  const int type = ot_u16(r->d, l), nsub = ot_u16(r->d, l + 4);
+  for (int i = 0; i < nsub; i++) {
+    const uint32_t o = l + (uint32_t)ot_u16(r->d, l + 6 + (uint32_t)i * 2);
+    if (ot_subtable(r, type, o, pos, r_len, depth)) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+/* The face's features of one table over `g` (`n` glyphs, all of the face):
+ * the glyphs left. */
+static int ot_run(int face, int gpos, WalkGlyph *g, int n)
+{
+  const OtLayout *gi = face_layout(face, gpos);
+  if (!gi->table || n < (gpos ? 1 : 2)) {
+    return n;
+  }
+  const stbtt_fontinfo *info = &g_faces[face].info;
+  OtRun r = {info->data, gi->table, gpos, 0, g, n};
+  const uint32_t gdef = stbtt__find_table((stbtt_uint8 *)info->data, (stbtt_uint32)info->fontstart, "GDEF");
+  if (gdef && ot_u16(r.d, gdef + 4)) {
+    r.gdef_classes = gdef + (uint32_t)ot_u16(r.d, gdef + 4);
+  }
+  for (int k = 0; k < gi->n; k++) {
+    for (int pos = 0; pos < r.n;) {
+      int len = 1;
+      if (!ot_apply_at(&r, gi->lookups[k], pos, &len, 0)) {
+        len = 1;
+      }
+      pos += len;
+    }
+  }
+  return r.n;
+}
+
+/* Joined parts that belong to the emoji before them: joiners, keycaps, tags. */
+static int cp_is_joiner(int cp)
+{
+  return cp == 0x200D || cp == 0x20E3 || (cp >= 0xE0020 && cp <= 0xE007F);
+}
+
 /* Walks the glyphs of a run: each glyph's slot (the run's, or its fallback
  * for characters the face lacks) and pen position in pixels (unrounded). */
 typedef void (*GlyphFn)(void *user, const FontSlot *s, int glyph, float pen);
@@ -4037,22 +4467,55 @@ typedef void (*GlyphFn)(void *user, const FontSlot *s, int glyph, float pen);
 static float glyph_walk(const FontSlot *s, const char *utf8, int len, GlyphFn fn, void *user)
 {
   const stbtt_fontinfo *info = &g_faces[s->face].info;
-  float pen = 0.0f;
-  int prev = 0;
-  const FontSlot *prev_s = s;
+  WalkGlyph stack[128];
+  WalkGlyph *g = stack;
+  int cap = 128, n = 0;
+  /* the glyphs, each from the face or its fallback */
   int i = 0;
   int cp = i < len ? utf8_next(utf8, len, &i) : -1;
+  int zwj = 0; /* the last glyph is a joiner of the emoji face */
   while (cp >= 0) {
     const int next = i < len ? utf8_next(utf8, len, &i) : -1; /* one ahead: U+FE0F */
+    if (n == cap) {
+      WalkGlyph *ng = (WalkGlyph *)malloc(sizeof(WalkGlyph) * (size_t)cap * 2);
+      if (!ng) {
+        break;
+      }
+      memcpy(ng, g, sizeof(WalkGlyph) * (size_t)n);
+      if (g != stack) {
+        free(g);
+      }
+      g = ng;
+      cap *= 2;
+    }
+    const FontSlot *prev_s = n ? g[n - 1].s : NULL;
+    const int in_emoji = prev_s && prev_s != s; /* just after a glyph of the emoji face */
+    const int was_zwj = zwj;
+    zwj = 0;
+    if (cp_is_joiner(cp) && in_emoji) {
+      /* a joiner, keycap or tag in an emoji sequence: the emoji face's, for its ligatures */
+      const int fbg = stbtt_FindGlyphIndex(&g_faces[prev_s->face].info, cp);
+      if (fbg) {
+        g[n++] = (WalkGlyph){prev_s, fbg, fbg, 0, 0, 0, 0.0f};
+        zwj = cp == 0x200D;
+      }
+      cp = next;
+      continue;
+    }
+    if ((cp >= 0xFE00 && cp <= 0xFE0F) || (cp >= 0xE0100 && cp <= 0xE01EF)) {
+      /* variation selectors only choose the presentation (the look ahead below) */
+      cp = next;
+      continue;
+    }
     const FontSlot *gs = s;
     int glyph = stbtt_FindGlyphIndex(info, cp == '\t' ? ' ' : cp);
     if (glyph == 0 && cp_is_format(cp)) { /* nothing to draw */
       cp = next;
       continue;
     }
-    if (cp >= 0x20 && (glyph == 0 || next == 0xFE0F)) {
-      /* the face lacks it, or U+FE0F asks for the emoji presentation: the
-       * emoji face (no kerning across faces) */
+    if (cp >= 0x20 && (glyph == 0 || next == 0xFE0F || was_zwj)) {
+      /* the face lacks it, U+FE0F asks for the emoji presentation, or a
+       * joiner ties it to an emoji: the emoji face (no kerning across faces) */
       const FontSlot *fb = slot_fallback(s);
       const int fbg = fb ? stbtt_FindGlyphIndex(&g_faces[fb->face].info, cp) : 0;
       if (fbg) {
@@ -4060,16 +4523,53 @@ static float glyph_walk(const FontSlot *s, const char *utf8, int len, GlyphFn fn
         gs = fb;
       }
     }
-    if (prev && gs == prev_s) {
-      pen += gs->scale * (float)stbtt_GetGlyphKernAdvance(&g_faces[gs->face].info, prev, glyph);
+    g[n++] = (WalkGlyph){gs, glyph, 0, 0, 0, 0, 0.0f};
+    cp = next;
+  }
+  /* each run of the emoji face's glyphs shaped: its ligatures, the joiners
+   * none took dropped, then its positioning */
+  for (int a = 0; a < n;) {
+    int b = a + 1;
+    while (b < n && g[b].s == g[a].s) {
+      b++;
+    }
+    if (g[a].s != s) {
+      int m = ot_run(g[a].s->face, 0, g + a, b - a);
+      int kept = 0;
+      for (int k = 0; k < m; k++) {
+        if (!(g[a + k].fmt && g[a + k].fmt == g[a + k].glyph)) {
+          g[a + kept++] = g[a + k];
+        }
+      }
+      m = ot_run(g[a].s->face, 1, g + a, kept);
+      if (m < b - a) {
+        memmove(g + a + m, g + b, sizeof(WalkGlyph) * (size_t)(n - b));
+        n -= b - a - m;
+        b = a + m;
+      }
+    }
+    a = b;
+  }
+  /* pen positions, kerned within a face; attached glyphs placed on theirs */
+  float pen = 0.0f;
+  for (int k = 0; k < n; k++) {
+    const FontSlot *gs = g[k].s;
+    if (g[k].back) {
+      g[k].x = g[k - g[k].back].x + gs->scale * (float)g[k].dx;
+    }
+    else {
+      if (k && g[k - 1].s == gs && !g[k - 1].back) {
+        pen += gs->scale * (float)stbtt_GetGlyphKernAdvance(&g_faces[gs->face].info, g[k - 1].glyph, g[k].glyph);
+      }
+      g[k].x = pen + gs->scale * (float)g[k].dx;
+      pen += glyph_advance(gs, g[k].glyph) + gs->scale * (float)g[k].dadv;
     }
     if (fn) {
-      fn(user, gs, glyph, pen);
+      fn(user, gs, g[k].glyph, g[k].x);
     }
-    pen += glyph_advance(gs, glyph);
-    prev = glyph;
-    prev_s = gs;
-    cp = next;
+  }
+  if (g != stack) {
+    free(g);
   }
   return pen;
 }
