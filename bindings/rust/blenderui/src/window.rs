@@ -769,6 +769,15 @@ impl App {
         });
     }
 
+    /// Resize the window to `w` x `h` logical pixels, as a host's configure
+    /// does: the next frame is laid out at the new size.
+    pub fn simulate_resize(&mut self, window: WindowId, w: f32, h: f32) {
+        if let Some(win) = self.windows.get_mut(window.0).and_then(|w| w.as_deref_mut()) {
+            win.phys = ((w * win.scale).round() as i32, (h * win.scale).round() as i32);
+            win.dirty = true;
+        }
+    }
+
     /// Type text / press a key (`keysym` as in Tk: "Return", "BackSpace", "a" ...).
     pub fn simulate_key(&mut self, window: WindowId, text: &str, keysym: &str) {
         let (t, k) = (CString::new(text).unwrap_or_default(), CString::new(keysym).unwrap_or_default());
@@ -914,6 +923,9 @@ pub struct Window {
     due: Option<f64>,
     /// The tooltip (`crate::tooltip`).
     tips: crate::tooltip::Tips,
+    /// Elements this pass rendered by where they were last laid out
+    /// ([`Window::own_bounds`]), with those bounds.
+    sized_by: Vec<(Key, Option<Bounds<f32>>)>,
 }
 
 impl Window {
@@ -973,6 +985,7 @@ impl Window {
                 bars: crate::scrollbar::Bars::default(),
                 due: None,
                 tips: crate::tooltip::Tips::default(),
+                sized_by: Vec::new(),
             };
             if headless {
                 win.scale = sys::BK_scale().max(1.0);
@@ -1212,6 +1225,17 @@ impl Window {
         f.by_key().get(&id_key(id)).map(|&i| f.nodes[i].bounds)
     }
 
+    /// [`Window::bounds_of`] for an element that renders by its own size
+    /// (a virtual list lays its rows out for its width): when this frame
+    /// lays it out elsewhere, the frame is rendered and laid out once more
+    /// before it is painted, so the element never shows a layout made for
+    /// its last size (a window resized, its box changed).
+    pub fn own_bounds(&mut self, id: &str) -> Option<Bounds<f32>> {
+        let b = self.bounds_of(id);
+        self.sized_by.push((id_key(id), b));
+        b
+    }
+
     /// Put `text` on the clipboard.
     pub fn write_clipboard(&mut self, text: &str) {
         let c = CString::new(text.replace('\0', "")).unwrap_or_default();
@@ -1231,10 +1255,14 @@ impl Window {
 
     // -- render -----------------------------------------------------------------------------
 
-    fn rebuild(&mut self, app: &mut App) {
+    /// One pass of [`Window::rebuild`]: render the view and lay it out.
+    /// Returns the frame, whether animations run and whether the layout
+    /// changed sizes something rendered by (another pass is wanted).
+    fn build(&mut self, app: &mut App) -> Option<(Frame, bool, bool)> {
         // the view is moved out while it renders (it gets `&mut Window`)
-        let Some(view) = self.view.take() else { return };
+        let view = self.view.take()?;
         self.dirty = false;
+        self.sized_by.clear();
         self.bars.lists.clear(); // the lists rendered now register again
         let root = {
             let _s = span(Phase::Render);
@@ -1261,8 +1289,43 @@ impl Window {
         // CSS animations / transitions still moving: render again next frame
         // (nothing running: no frames, so an idle window costs no CPU)
         let animating = self.caches.anim.end();
-        // `@container`: sizes changed under a query: render once more
-        let container_changed = self.caches.after_layout(&frame);
+        // `@container`, `overflow-wrap: anywhere`: sizes changed under them; an element
+        // that rendered by its last bounds (a virtual list) was placed elsewhere
+        let again = self.caches.after_layout(&frame) | self.moved_since_render(&frame);
+        Some((frame, animating, again))
+    }
+
+    /// Whether an element that rendered by where it was last laid out
+    /// ([`Window::own_bounds`]) was laid out elsewhere in `frame`.
+    fn moved_since_render(&self, frame: &Frame) -> bool {
+        self.sized_by.iter().any(|(key, was)| {
+            let now = frame.by_key().get(key).map(|&i| frame.nodes[i].bounds);
+            now != *was
+        })
+    }
+
+    /// Build and lay out the view, as many times as it takes for elements
+    /// that render by their own size to see the size they are laid out at
+    /// (a window resized, a list's box changed: the frame never shows them
+    /// at the last size), then paint it.
+    fn rebuild(&mut self, app: &mut App) {
+        /// Layout passes a frame takes at most (sizes feeding back settle in one or two).
+        const LAYOUT_PASSES: u32 = 3;
+        let Some((mut frame, mut animating, mut again)) = self.build(app) else { return };
+        let mut passes = 1;
+        while again && passes < LAYOUT_PASSES {
+            // as two frames back to back, the first not painted: its effects run, and the
+            // next pass reads its layout with `bounds_of`
+            crate::hooks::end();
+            self.frame = Some(frame);
+            let Some(next) = self.build(app) else { return };
+            (frame, animating, again) = next;
+            passes += 1;
+        }
+        // still moving after every pass: once more next frame
+        let container_changed = again;
+        let vp = self.viewport();
+        let (canvas, scale) = (self.canvas, self.scale);
         let p = &mut self.painter;
         p.reset();
         let (now, reduced) = (self.clock.now(), crate::reduced_motion());

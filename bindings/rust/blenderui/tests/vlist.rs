@@ -129,3 +129,59 @@ fn the_background_follows_the_theme() {
     };
     assert_ne!(shot("light"), shot("dark"));
 }
+
+/// A chat as wide as the window, 300 px high, and under it a line that notes, as it is
+/// painted, its own width and the width the chat's rows are laid out for then.
+struct Full {
+    chat: Chat,
+    painted: std::rc::Rc<std::cell::RefCell<Vec<(f32, f32)>>>,
+}
+
+impl Render for Full {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let (chat, painted) = (self.chat, self.painted.clone());
+        let note = canvas_with(move |b, _, cx| painted.borrow_mut().push((b.size.width, chat.read(cx).view.viewport().0)));
+        body().m_0().child(div().w_full().h(px(300.0)).child(chat_list(&self.chat))).child(note.w_full().h(px(1.0)))
+    }
+}
+
+#[test]
+fn every_frame_lays_the_rows_out_at_the_newest_window_size() {
+    run("dark", |cx| {
+        let opts = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds { origin: point(px(0.0), px(0.0)), size: size(px(700.0), px(400.0)) })),
+            ..Default::default()
+        };
+        let mut handle = None;
+        let painted = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let notes = painted.clone();
+        let win = cx
+            .open_window(opts, |_, cx| {
+                let o = Options { start_at_end: true, ..Options::default() };
+                let chat = cx.new(|cx| ListState::new(ChatList::from_messages(synth::messages(0, 500), theme_palette(), 700.0, 400.0, o), cx));
+                handle = Some(chat);
+                cx.new(|_| Full { chat, painted: notes })
+            })
+            .unwrap();
+        let (id, chat) = (win.id, handle.unwrap());
+        let scale = cx.draw(id).0 as f32 / 700.0;
+        assert_eq!(chat.read(cx).view.viewport(), (700.0, 300.0));
+        // one size per frame, then several between two frames: every frame paints the rows
+        // laid out for the width it is drawn at, the last one configured
+        for sizes in [&[(760.0, 400.0)][..], &[(720.0, 380.0), (701.0, 420.0), (733.0, 377.0)], &[(640.0, 300.0)]] {
+            for &(w, h) in sizes {
+                cx.simulate_resize(id, w, h);
+            }
+            let (pw, ph, _) = cx.draw(id);
+            let &(w, h) = sizes.last().unwrap();
+            // the buffer, the layout and the paint all at the last size
+            assert_eq!((pw, ph), ((w * scale).round() as usize, (h * scale).round() as usize));
+            assert_eq!(painted.borrow().last().map(|p| p.0), Some(w));
+        }
+        let painted = painted.borrow();
+        assert!(painted.len() >= 4, "{painted:?}");
+        for &(box_w, rows_w) in painted.iter() {
+            assert_eq!(rows_w, box_w, "a frame painted rows laid out for {rows_w} px in a {box_w} px box: {painted:?}");
+        }
+    });
+}

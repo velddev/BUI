@@ -77,7 +77,8 @@ impl IntoElement for UniformList {
         let UniformList { base, id, count, item_h, f } = self;
         AnyElement::Element(base.defer(move |window, cx, el| {
             let item_h = item_h.unwrap_or_else(|| window.ui_unit()).max(1.0);
-            let bounds = window.bounds_of(&id);
+            // rows for its height: laid out elsewhere this frame, the frame is laid out again
+            let bounds = window.own_bounds(&id);
             let view_h = bounds.map_or_else(|| window.viewport_size().height.0, |b| b.size.height);
             let scroll = clamp_scroll(
                 f64::from(window.scroll_offset(&id).1), count, f64::from(item_h), f64::from(view_h));
@@ -90,9 +91,6 @@ impl IntoElement for UniformList {
             }
             let spacer = div().relative().w_full().flex_none().h(px(count as f32 * item_h)).child(at);
             el.children.push(AnyElement::Element(spacer));
-            if bounds.is_none() {
-                window.refresh(); // first frame: lay out once to learn the height
-            }
         }))
     }
 }

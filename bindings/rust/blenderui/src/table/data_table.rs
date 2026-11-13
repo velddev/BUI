@@ -159,15 +159,15 @@ impl<D: TableDelegate> IntoElement for DataTable<D> {
             if let Some(v) = fixed_border { o.fixed_cols_border = v }
             if let Some(v) = scrollbars { o.scrollbars = v }
             o.header_row_height = header_h.or(o.header_row_height);
-            let known = window.bounds_of(&id);
-            let bounds = known.unwrap_or_default();
+            // drawn for its size: laid out elsewhere this frame, the frame is laid out again
+            let bounds = window.own_bounds(&id).unwrap_or_default();
             let (unit, scale) = (window.ui_unit(), window.scale_factor());
             let handles = state.update(cx, |s, c| {
                 s.opts = o;
-                let changed = known.is_none() || s.bounds != bounds || (s.unit() - unit).abs() > f32::EPSILON;
+                let changed = (s.unit() - unit).abs() > f32::EPSILON;
                 s.sync(bounds, unit, scale, window, c);
                 if changed {
-                    window.refresh(); // placed for the first time or resized: draw once more with the new size
+                    window.refresh(); // another UI unit: draw once more with it
                 }
                 s.header_handles()
             });

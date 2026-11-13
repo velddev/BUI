@@ -71,17 +71,14 @@ impl<S: ItemSource, P: Measurer + ItemPainter> IntoElement for VariableList<S, P
         let VariableList { state, base, on_item_click, on_view_change } = self;
         let el = base.defer(move |window, cx, el| {
             let id = state.read(cx).id.clone();
-            let known = window.bounds_of(&id);
-            let bounds = known.unwrap_or_default();
+            // the rows are laid out for the list's size: placed elsewhere this frame (the
+            // first frame, a resize), the window lays the frame out once more before it paints
+            let bounds = window.own_bounds(&id).unwrap_or_default();
             let scale = window.scale_factor();
-            let (changed, view) = state.update(cx, |s, _| {
-                let moved = known.is_none() || s.bounds != bounds;
+            let view = state.update(cx, |s, _| {
                 s.sync(bounds, scale, window);
-                (moved, s.take_view_change())
+                s.take_view_change()
             });
-            if changed {
-                window.refresh(); // placed for the first time or resized: lay out once more with the size
-            }
             if let (Some(f), Some(info)) = (&on_view_change, view) {
                 f(&info);
             }
