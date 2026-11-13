@@ -618,6 +618,10 @@ impl App {
     /// Re-render dirty windows now (headless) or soon (native: next loop turn).
     fn flush(&mut self) {
         self.drain();
+        // a press on a text box moves the kit's focus and nothing the window hears
+        for w in self.windows.iter_mut().flatten() {
+            w.follow_kit_focus();
+        }
         // windows whose signals were written (hooks)
         for id in crate::hooks::take_dirty() {
             if id == usize::MAX {
