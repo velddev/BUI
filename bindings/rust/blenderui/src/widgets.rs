@@ -104,6 +104,24 @@ pub(crate) struct WidgetSpec {
     /// `<textarea bui-edge-jump>`: Up on the first line moves the caret to
     /// the start, Down on the last line to the end (Shift extends).
     pub edge_jump: bool,
+    /// `<textarea bui-pass-keys="Up Down Return Tab Escape">`: keys the box
+    /// leaves alone, so only the app's `on_key_down` acts on them (a
+    /// completion list over the box moves, picks and closes with them).
+    /// Bits of [`pass_keys`]; Return stands for KP_Enter too.
+    pub pass_keys: u8,
+}
+
+/// The kit's `pass_keys` bits for a space-separated list of keysyms (`Up`,
+/// `Down`, `Return` or `KP_Enter`, `Tab`, `Escape`; others are ignored).
+pub fn pass_keys(keys: &str) -> u8 {
+    keys.split_whitespace().fold(0, |bits, k| bits | match k {
+        "Up" => 1,
+        "Down" => 2,
+        "Return" | "KP_Enter" => 4,
+        "Tab" => 8,
+        "Escape" => 16,
+        _ => 0,
+    })
 }
 
 impl WidgetSpec {
@@ -182,6 +200,7 @@ impl WidgetSpec {
             meter: [None; 3],
             font_scale: 0.0,
             edge_jump: false,
+            pass_keys: 0,
         }
     }
 
@@ -283,6 +302,7 @@ impl WidgetSpec {
             "textarea" => {
                 s = WidgetSpec::new(WKind::TextArea, attrs);
                 s.edge_jump = attr(attrs, "bui-edge-jump").is_some();
+                s.pass_keys = attr(attrs, "bui-pass-keys").map_or(0, pass_keys);
                 s.text = Some(attr(attrs, "value").map(str::to_owned)
                     .unwrap_or_else(|| d.children.iter().filter_map(|c| match c {
                         AnyElement::Text(t) => Some(t.as_ref()),
@@ -525,6 +545,9 @@ fn sync(n: *mut sys::BKNode, old: Option<&WidgetSpec>, spec: &WidgetSpec) {
         }
         if old.is_some_and(|o| o.edge_jump) != spec.edge_jump {
             set_num(c"edge_jump", spec.edge_jump as i32 as f64);
+        }
+        if old.map_or(0, |o| o.pass_keys) != spec.pass_keys {
+            set_num(c"pass_keys", f64::from(spec.pass_keys));
         }
         if old.is_none_or(|o| o.placeholder != spec.placeholder) && !spec.placeholder.is_empty() {
             set_str(c"placeholder", &spec.placeholder);

@@ -405,6 +405,56 @@ fn textarea_caret_and_edge_jump() {
     });
 }
 
+/// A box with a list over it: `bui-pass-keys` leaves its keys to the app (`on_key_down` still
+/// sees them) and the box neither moves its caret nor edits; without it, as before.
+struct PassKeys {
+    pass: bool,
+    keys: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+}
+
+impl Render for PassKeys {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let keys = self.keys.clone();
+        let mut t = textarea().id("box").value("one\ntwo");
+        if self.pass {
+            t = t.attr("bui-pass-keys", "Up Down Return Tab Escape");
+        }
+        div().styled().id("root").size_full().child(t).on_key_down(move |e, _, _| keys.borrow_mut().push(e.keystroke.key.clone()))
+    }
+}
+
+#[test]
+fn textarea_pass_keys_leave_keys_to_the_app() {
+    Application::headless().run(|cx| {
+        let keys = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let win = open(cx, 400.0, 600.0, PassKeys { pass: true, keys: keys.clone() });
+        let id = win.id;
+        cx.draw(id);
+        let caret = |cx: &mut App| win.update(cx, |_, w, _| w.textarea_caret("box")).unwrap();
+        win.update(cx, |_, w, _| w.focus_id("box")).unwrap();
+        assert!(win.update(cx, |_, w, _| w.set_textarea_caret("box", TextCaret::at(5))).unwrap());
+        for k in ["Down", "Up", "Up", "Return", "KP_Enter", "Tab"] {
+            cx.simulate_key(id, "", k);
+            assert_eq!(caret(cx), Some(TextCaret::at(5)), "{k} left the caret");
+        }
+        cx.simulate_key(id, "", "Escape");
+        cx.simulate_key(id, "x", "x");
+        assert_eq!(caret(cx), Some(TextCaret::at(6)), "Escape kept the focus: x typed");
+        assert_eq!(*keys.borrow(), ["Down", "Up", "Up", "Return", "KP_Enter", "Tab", "Escape", "x"], "the app heard each");
+        cx.simulate_key(id, "", "Left");
+        assert_eq!(caret(cx), Some(TextCaret::at(5)), "other keys still move it");
+        // the attribute gone, the box takes them again
+        win.update(cx, |v, _, cx| {
+            v.pass = false;
+            cx.notify();
+        })
+        .unwrap();
+        cx.draw(id);
+        cx.simulate_key(id, "", "Up");
+        assert_eq!(caret(cx), Some(TextCaret::at(1)), "\"two\" column 1 to \"one\" column 1");
+    });
+}
+
 /// Command (`platform`) takes the text box's shortcuts as Ctrl does: ⌘A selects everything.
 /// On macOS the Control key alone edits as Cocoa's text fields do (Control+A/E: the line's
 /// start and end), never a shortcut.

@@ -36,8 +36,30 @@ typedef struct TAData {
   bool rows_set;  /* "rows" was given (the browser look defaults to 2) */
   bool edge_jump; /* "edge_jump": Up past the first line goes to the start, Down past the last to
                    * the end (as browsers do) */
+  int pass_keys;  /* "pass_keys": TA_PASS_* bits, keys left to the host (a list over the box) */
   BKImeComp ime; /* the IME composition at the caret */
 } TAData;
+
+/* "pass_keys" bits: keys the box doesn't handle, so its host can (a completion list over it
+ * moves with Up and Down, picks with Enter and Tab, closes with Escape) */
+enum {
+  TA_PASS_UP = 1 << 0,
+  TA_PASS_DOWN = 1 << 1,
+  TA_PASS_ENTER = 1 << 2, /* Return and KP_Enter */
+  TA_PASS_TAB = 1 << 3,
+  TA_PASS_ESCAPE = 1 << 4,
+};
+
+/* Is `ks` one of the keys `t` leaves to its host? */
+static bool ta_passes(const TAData *t, const char *ks)
+{
+  const int p = t->pass_keys;
+  return ((p & TA_PASS_UP) && bk_keysym_is(ks, "Up")) ||
+         ((p & TA_PASS_DOWN) && bk_keysym_is(ks, "Down")) ||
+         ((p & TA_PASS_ENTER) && (bk_keysym_is(ks, "Return") || bk_keysym_is(ks, "KP_Enter"))) ||
+         ((p & TA_PASS_TAB) && bk_keysym_is(ks, "Tab")) ||
+         ((p & TA_PASS_ESCAPE) && bk_keysym_is(ks, "Escape"));
+}
 
 #define TA(n) ((TAData *)(n)->ext)
 
@@ -474,6 +496,9 @@ static int ta_key(BKNode *n, BKEvent *e)
     }
     ks = mapped;
   }
+  if (ta_passes(t, ks)) {
+    return 0;
+  }
   int a, b;
   const bool sel = BK_textarea_selection(n, &a, &b);
   bool edited = false, keep_x = false;
@@ -630,6 +655,10 @@ static int ta_set_num(BKNode *n, const char *key, double v)
   }
   if (strcmp(key, "edge_jump") == 0) {
     TA(n)->edge_jump = v != 0.0;
+    return 1;
+  }
+  if (strcmp(key, "pass_keys") == 0) {
+    TA(n)->pass_keys = (int)v;
     return 1;
   }
   return 0;
