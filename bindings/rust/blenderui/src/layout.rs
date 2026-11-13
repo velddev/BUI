@@ -2214,6 +2214,7 @@ pub(crate) fn layout(root: AnyElement, tooltip: Option<Div>, viewport: (f32, f32
     for id in caches.recon.extra.drain(..) {
         caches.taffy.remove(id);
     }
+    caches.taffy.forget_freed();
     caches.recon.stamp = caches.recon.stamp.wrapping_add(1);
     caches.text_box.clear();
     let Frame { mut nodes, mut els, .. } = recycle;
@@ -2287,6 +2288,7 @@ pub(crate) fn layout(root: AnyElement, tooltip: Option<Div>, viewport: (f32, f32
         taffy_ref.remove(*id);
         false
     });
+    b.taffy.forget_freed();
     let avail = Size { width: AvailableSpace::Definite(viewport.0),
                        height: AvailableSpace::Definite(viewport.1) };
     let Builder { nodes, els, taffy, styles, text: tc, title, text_box, .. } = b;

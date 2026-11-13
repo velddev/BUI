@@ -34,11 +34,13 @@ struct Node<C> {
 pub(crate) struct LayoutTree<C> {
     nodes: Vec<Node<C>>,
     free: Vec<usize>,
+    /// Nodes were freed since [`LayoutTree::forget_freed`] last ran.
+    freed: bool,
 }
 
 impl<C> Default for LayoutTree<C> {
     fn default() -> Self {
-        LayoutTree { nodes: Vec::new(), free: Vec::new() }
+        LayoutTree { nodes: Vec::new(), free: Vec::new(), freed: false }
     }
 }
 
@@ -97,6 +99,24 @@ impl<C> LayoutTree<C> {
                 n.hoisted = Vec::new();
                 n.detail = DetailedLayoutInfo::None;
                 self.free.push(i);
+                self.freed = true;
+            }
+        }
+    }
+
+    /// Drop the nodes freed since the last call from every live node's hoisted (absolutely
+    /// positioned) descendants. A node whose layout is cached keeps the list its last layout
+    /// made, and a freed slot is soon a new node, maybe one of its ancestors: rounding would
+    /// then go round that loop for ever (a stack overflow). Call it after each batch of
+    /// removals, before any node is made again.
+    pub fn forget_freed(&mut self) {
+        if !std::mem::take(&mut self.freed) {
+            return;
+        }
+        let live: Vec<bool> = self.nodes.iter().map(|n| n.live).collect();
+        for n in &mut self.nodes {
+            if n.live && !n.hoisted.is_empty() {
+                n.hoisted.retain(|h| live.get(ix(*h)).copied().unwrap_or(false));
             }
         }
     }
@@ -401,5 +421,31 @@ where
     #[inline(always)]
     fn get_hoisted_child_id(&self, id: NodeId, k: usize) -> NodeId {
         self.t.nodes[ix(id)].hoisted[k]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_freed_node_leaves_every_hoisted_list() {
+        let mut t: LayoutTree<()> = LayoutTree::default();
+        let abs = t.new_leaf(Style::default());
+        let kept = t.new_leaf(Style::default());
+        let host = t.new_with_children(Style::default(), &[]);
+        // what a cached layout left: two absolutely positioned descendants hoisted
+        t.nodes[ix(host)].hoisted = vec![abs, kept];
+        t.remove(abs);
+        t.forget_freed();
+        assert_eq!(t.nodes[ix(host)].hoisted, vec![kept]);
+        // the freed slot, made again (here the host's new parent), is no hoisted child of it
+        let top = t.new_with_children(Style::default(), &[host]);
+        assert_eq!(ix(top), ix(abs));
+        assert!(!t.nodes[ix(host)].hoisted.contains(&top));
+        // nothing freed since: nothing to do
+        t.nodes[ix(host)].hoisted.push(top);
+        t.forget_freed();
+        assert_eq!(t.nodes[ix(host)].hoisted, vec![kept, top]);
     }
 }
