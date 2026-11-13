@@ -620,6 +620,14 @@ static CGColorSpaceRef srgb(void)
 {
   if (bk) {
     bk->flags = [NSEvent modifierFlags]; /* modifiers may have changed elsewhere */
+    BK_window_request_frame(bk, 0);       /* BK_window_focused changed */
+  }
+}
+
+- (void)windowDidResignKey:(NSNotification *)notification
+{
+  if (bk) {
+    BK_window_request_frame(bk, 0); /* BK_window_focused changed */
   }
 }
 
@@ -1649,6 +1657,31 @@ void BK_window_wm(BKWindow *win, const char *key, double a, double b)
       [NSApp activateIgnoringOtherApps:YES];
       [nw makeKeyAndOrderFront:nil];
     }
+  }
+}
+
+int BK_window_focused(BKWindow *win)
+{
+  if (!pthread_main_np()) {
+    return -1;
+  }
+  return win->nswin && [win->nswin isKeyWindow];
+}
+
+/* The token is an xdg-activation token: macOS has no use for it. */
+void BK_window_activate(BKWindow *win, const char *token)
+{
+  NSWindow *nw = win->nswin;
+  if (!nw || !pthread_main_np()) {
+    return;
+  }
+  (void)token;
+  @autoreleasepool {
+    if ([nw isMiniaturized]) {
+      [nw deminiaturize:nil];
+    }
+    [NSApp activateIgnoringOtherApps:YES];
+    [nw makeKeyAndOrderFront:nil];
   }
 }
 

@@ -640,3 +640,52 @@ fn a_triple_click_selects_a_text_box_line_and_counts_on() {
         assert_eq!(*downs.borrow(), [("pad", 1), ("pad", 2), ("pad", 3), ("pad", 4)]);
     });
 }
+
+/// Paints green while the window has the keyboard focus, grey otherwise, and records what
+/// each render saw.
+struct Focus {
+    seen: std::rc::Rc<std::cell::RefCell<Vec<Option<bool>>>>,
+}
+
+impl Render for Focus {
+    fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let active = window.is_active();
+        self.seen.borrow_mut().push(active);
+        let color = if active == Some(true) { 0x00ff00 } else { 0x808080 };
+        body().m_0().child(div().id("dot").size(px(20.0)).bg(rgb(color)))
+    }
+}
+
+#[test]
+fn activation_re_renders_with_the_focus_state() {
+    Application::headless().run(|cx| {
+        let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let win = open(cx, 100.0, 50.0, Focus { seen: seen.clone() });
+        let id = win.id;
+        let img = cx.draw(id);
+        let s = img.0 as f32 / 100.0;
+        let dot = |img: &(usize, usize, Vec<u32>)| pixel(img, (10.0 * s) as usize, (10.0 * s) as usize);
+        assert_eq!(cx.window(id).unwrap().is_active(), None, "headless windows can't tell at first");
+        assert_eq!(dot(&img), 0x808080);
+        assert_eq!(seen.borrow().last(), Some(&None));
+
+        cx.simulate_activation(id, true);
+        assert_eq!(cx.window(id).unwrap().is_active(), Some(true));
+        assert_eq!(seen.borrow().last(), Some(&Some(true)), "the change re-rendered the window");
+        assert_eq!(dot(&cx.draw(id)), 0x00ff00);
+
+        let renders = seen.borrow().len();
+        cx.simulate_activation(id, true); // no change, no render
+        assert_eq!(seen.borrow().len(), renders);
+
+        cx.simulate_activation(id, false);
+        assert_eq!(cx.window(id).unwrap().is_active(), Some(false));
+        assert_eq!(seen.borrow().last(), Some(&Some(false)));
+        assert_eq!(dot(&cx.draw(id)), 0x808080);
+
+        cx.activate_window(id, Some("token")); // headless: becomes active
+        assert_eq!(cx.window(id).unwrap().is_active(), Some(true));
+        cx.activate_window(id, None);
+        assert_eq!(cx.window(id).unwrap().is_active(), Some(true));
+    });
+}

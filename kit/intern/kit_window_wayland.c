@@ -28,6 +28,7 @@
 
 #  include <wayland-client.h>
 
+#  include "xdg-activation-v1-client-protocol.h"
 #  include "xdg-decoration-unstable-v1-client-protocol.h"
 #  include "xdg-shell-client-protocol.h"
 
@@ -145,6 +146,7 @@ static struct {
   struct wl_shm *shm;
   struct xdg_wm_base *wm_base;
   struct zxdg_decoration_manager_v1 *decoration_manager;
+  struct xdg_activation_v1 *activation; /* NULL when the compositor has no xdg-activation */
   struct wl_seat *seat;
   struct wl_pointer *pointer;
   struct wl_keyboard *keyboard;
@@ -600,17 +602,32 @@ static void keyboard_keymap(void *d, struct wl_keyboard *kb, uint32_t format, in
   close(fd);
 }
 
+/* BK_window_focused changed: render a frame so the host's on_frame can read it. */
+static void focus_changed(BKWindow *win)
+{
+  if (win && win->open) {
+    bk_wl_window_request_frame(win, 0);
+  }
+}
+
 static void keyboard_enter(void *d, struct wl_keyboard *kb, uint32_t serial, struct wl_surface *s,
                            struct wl_array *keys)
 {
+  BKWindow *prev = g.keyboard_win;
   g.keyboard_win = find_window(s);
   g.serial = serial;
+  if (prev != g.keyboard_win) {
+    focus_changed(prev);
+    focus_changed(g.keyboard_win);
+  }
 }
 
 static void keyboard_leave(void *d, struct wl_keyboard *kb, uint32_t serial, struct wl_surface *s)
 {
-  if (g.keyboard_win == find_window(s)) {
+  BKWindow *win = find_window(s);
+  if (g.keyboard_win == win) {
     g.keyboard_win = NULL;
+    focus_changed(win);
   }
   g.repeat_key = 0;
 }
@@ -859,6 +876,9 @@ static void registry_global(void *d, struct wl_registry *reg, uint32_t name, con
   }
   else if (!strcmp(iface, zxdg_decoration_manager_v1_interface.name)) {
     g.decoration_manager = wl_registry_bind(reg, name, &zxdg_decoration_manager_v1_interface, 1);
+  }
+  else if (!strcmp(iface, xdg_activation_v1_interface.name)) {
+    g.activation = wl_registry_bind(reg, name, &xdg_activation_v1_interface, 1);
   }
   else if (!strcmp(iface, wl_seat_interface.name) && !g.seat) {
     g.seat = wl_registry_bind(reg, name, &wl_seat_interface, BK_MIN(version, 5u));
@@ -1298,6 +1318,22 @@ void bk_wl_window_request_frame(BKWindow *win, int vsync)
   win->want_frame = 1;
   win->frame_vsync = vsync;
   win->render_pending = 1;
+}
+
+int bk_wl_window_focused(BKWindow *win)
+{
+  return win->open && g.keyboard_win == win;
+}
+
+/* xdg_activation_v1: a compositor only raises a window for a token it handed out (here, from a
+ * notification server's ActivationToken). Without the global or a token there is nothing to ask. */
+void bk_wl_window_activate(BKWindow *win, const char *token)
+{
+  if (!win->open || !g.activation || !token || !token[0]) {
+    return;
+  }
+  xdg_activation_v1_activate(g.activation, token, win->surface);
+  wl_display_flush(g.display);
 }
 
 void *bk_wl_window_handle(BKWindow *win)

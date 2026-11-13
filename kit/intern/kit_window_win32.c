@@ -517,6 +517,9 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_SIZE:
       host_request(win);
       return 0;
+    case WM_ACTIVATE: /* BK_window_focused changed: the host's on_frame reads it */
+      BK_window_request_frame(win, 0);
+      break; /* DefWindowProc sets the keyboard focus */
     case WM_DPICHANGED: {
       win->scale = HIWORD(wp) / 96.0f;
       if (!getenv("BUI_UI_SCALE")) {
@@ -943,6 +946,38 @@ void BK_window_cancel_timer(BKWindow *win, int id)
 void *BK_window_handle(BKWindow *win)
 {
   return win->hwnd;
+}
+
+int BK_window_focused(BKWindow *win)
+{
+  return win->hwnd && GetForegroundWindow() == win->hwnd;
+}
+
+/* Restore, then take the foreground. Windows only lets the foreground thread hand it over, so
+ * attach to that thread's input for the call. The xdg-activation token has no meaning here. */
+void BK_window_activate(BKWindow *win, const char *token)
+{
+  HWND h = win->hwnd;
+  if (!h) {
+    return;
+  }
+  (void)token;
+  if (IsIconic(h)) {
+    ShowWindow(h, SW_RESTORE);
+  }
+  else if (!IsWindowVisible(h)) {
+    ShowWindow(h, SW_SHOW);
+  }
+  HWND fg = GetForegroundWindow();
+  const DWORD me = GetCurrentThreadId();
+  const DWORD fg_thread = fg ? GetWindowThreadProcessId(fg, NULL) : 0;
+  const BOOL attached = fg_thread && fg_thread != me && AttachThreadInput(fg_thread, me, TRUE);
+  SetForegroundWindow(h);
+  BringWindowToTop(h);
+  SetFocus(h);
+  if (attached) {
+    AttachThreadInput(fg_thread, me, FALSE);
+  }
 }
 
 static void set_style(HWND hwnd, DWORD style)

@@ -714,6 +714,13 @@ void *BK_window_handle(BKWindow *win);       /* HWND / X11 Window / NSWindow * *
 void BK_window_wm(BKWindow *win, const char *key, double a, double b);
 /* Queries: "pos", "state", "screen" (w, h), "pointer" (x, y), "scale". */
 int BK_window_wm_get(BKWindow *win, const char *key, double *r_a, double *r_b);
+/* Keyboard focus: 1 when the window has it, 0 when not, -1 when the backend can't tell.
+ * A change renders a frame (on_frame runs), so a host can read the new state there. */
+int BK_window_focused(BKWindow *win);
+/* Bring the window to the front and focus it. `token` (may be NULL) is an xdg-activation
+ * token, e.g. from a notification server's ActivationToken signal: Wayland can only raise a
+ * window with one (xdg_activation_v1); X11 sets it as _NET_STARTUP_ID first; others ignore it. */
+void BK_window_activate(BKWindow *win, const char *token);
 /* Message loop: run until every window is closed (or BK_window_quit). */
 void BK_window_run(void);
 int BK_window_pump(void); /* handle pending messages; returns open windows */

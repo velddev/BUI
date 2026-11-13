@@ -55,6 +55,11 @@ void *BK_window_handle(BKWindow *win)
   return NULL;
 }
 void BK_window_wm(BKWindow *win, const char *key, double a, double b) {}
+int BK_window_focused(BKWindow *win)
+{
+  return -1;
+}
+void BK_window_activate(BKWindow *win, const char *token) {}
 int BK_window_wm_get(BKWindow *win, const char *key, double *r_a, double *r_b)
 {
   *r_a = *r_b = 0.0;

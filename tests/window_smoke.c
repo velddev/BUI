@@ -9,6 +9,7 @@
 #include "BUI_kit.h"
 
 static int g_ticks = 0;
+static int g_focused_ok = 1; /* BK_window_focused only answers 1, 0 or -1 */
 
 static void on_timer(void *data, BKWindow *win, int id)
 {
@@ -17,6 +18,11 @@ static void on_timer(void *data, BKWindow *win, int id)
   /* some input through the same path the window uses */
   BK_motion(ctx, 100, 100, 0);
   BK_wheel(ctx, 200, 150, 1, 0);
+  if (g_ticks == 1) {
+    BK_window_activate(win, NULL); /* no token: Wayland asks nothing, the rest raise it */
+  }
+  const int focused = BK_window_focused(win);
+  g_focused_ok &= focused >= -1 && focused <= 1;
   if (g_ticks < 5) {
     BK_window_timer(win, 50);
   }
@@ -56,9 +62,10 @@ int main(void)
   const int frames = BK_window_frames(win);
   int w, h;
   BK_window_get_size(win, &w, &h);
-  printf("frames %d ticks %d size %dx%d gpu %d\n", frames, g_ticks, w, h, BK_window_gpu(win));
+  printf("frames %d ticks %d size %dx%d gpu %d focused %d\n", frames, g_ticks, w, h,
+         BK_window_gpu(win), BK_window_focused(win));
   BK_window_free(win);
   BK_context_free(ctx);
   BK_node_free(ed);
-  return frames > 0 && g_ticks >= 5 ? 0 : 1;
+  return frames > 0 && g_ticks >= 5 && g_focused_ok ? 0 : 1;
 }

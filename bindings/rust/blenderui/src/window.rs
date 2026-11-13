@@ -537,6 +537,22 @@ impl App {
     /// Activate the app (no-op: windows come to the front when shown).
     pub fn activate(&mut self, _ignoring_other_apps: bool) {}
 
+    /// Bring a window to the front and give it the keyboard focus. `token` is an
+    /// xdg-activation token (e.g. from a notification's `ActivationToken` signal): Wayland
+    /// compositors only raise a window for one, X11 passes it on as `_NET_STARTUP_ID`, Windows
+    /// and macOS don't need it. Headless windows become active.
+    pub fn activate_window(&mut self, id: WindowId, token: Option<&str>) {
+        let Some(w) = self.windows.get_mut(id.0).and_then(|w| w.as_deref_mut()) else { return };
+        match w.native {
+            Some(n) => {
+                let t = token.and_then(|t| CString::new(t).ok());
+                // SAFETY: a live native window; the token outlives the call.
+                unsafe { sys::BK_window_activate(n, t.as_ref().map_or(std::ptr::null(), |t| t.as_ptr())) };
+            }
+            None => self.simulate_activation(id, true),
+        }
+    }
+
     pub fn set_global<G: 'static>(&mut self, g: G) {
         self.globals.insert(TypeId::of::<G>(), Box::new(g));
     }
@@ -778,6 +794,18 @@ impl App {
         }
     }
 
+    /// Focus (`true`) or unfocus a headless window, as a desktop's focus change does:
+    /// [`Window::is_active`] reports it and the window re-renders.
+    pub fn simulate_activation(&mut self, window: WindowId, active: bool) {
+        if let Some(win) = self.windows.get_mut(window.0).and_then(|w| w.as_deref_mut()) {
+            if win.native.is_none() && win.active != Some(active) {
+                win.active = Some(active);
+                win.dirty = true;
+            }
+        }
+        self.flush();
+    }
+
     /// Type text / press a key (`keysym` as in Tk: "Return", "BackSpace", "a" ...).
     pub fn simulate_key(&mut self, window: WindowId, text: &str, keysym: &str) {
         let (t, k) = (CString::new(text).unwrap_or_default(), CString::new(keysym).unwrap_or_default());
@@ -837,6 +865,12 @@ unsafe extern "C" fn on_frame(data: *mut c_void, _win: *mut sys::BKWindow) {
             w.frame_pending = false;
             // a resize: the kit asks for this frame before drawing at the new size
             w.take_native_size();
+            // focus in / out: the kit renders a frame for it, rebuild so views see it
+            let active = w.is_active();
+            if active != w.active {
+                w.active = active;
+                w.dirty = true;
+            }
             if w.dirty {
                 w.rebuild(app);
             }
@@ -911,6 +945,9 @@ pub struct Window {
     clock: crate::anim::Clock,
     vsync: bool,
     closed: bool,
+    /// Keyboard focus: headless, what `App::simulate_activation` set; native, what the last
+    /// frame saw (a change marks the window dirty).
+    active: Option<bool>,
     title: String,
     cursor: i32,
     pointer: (f32, f32),
@@ -977,6 +1014,7 @@ impl Window {
                 clock: crate::anim::Clock::new(!headless),
                 vsync: true,
                 closed: false,
+                active: None,
                 title: title.to_owned(),
                 cursor: 0,
                 pointer: (-1.0, -1.0),
@@ -1034,6 +1072,20 @@ impl Window {
         if w > 0 && h > 0 && (w, h) != self.phys {
             self.phys = (w, h);
             self.dirty = true;
+        }
+    }
+
+    /// Whether the window has the keyboard focus; `None` when the backend can't tell (and in
+    /// headless windows until [`App::simulate_activation`]). A change re-renders the window.
+    pub fn is_active(&self) -> Option<bool> {
+        match self.native {
+            // SAFETY: a live native window owned by this Window.
+            Some(n) => match unsafe { sys::BK_window_focused(n) } {
+                0 => Some(false),
+                1 => Some(true),
+                _ => None,
+            },
+            None => self.active,
         }
     }
 

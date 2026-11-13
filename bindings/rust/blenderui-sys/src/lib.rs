@@ -386,6 +386,11 @@ unsafe extern "C" {
     pub fn BK_window_wm(win: *mut BKWindow, key: *const c_char, a: c_double, b: c_double);
     pub fn BK_window_wm_get(win: *mut BKWindow, key: *const c_char, r_a: *mut c_double,
                             r_b: *mut c_double) -> c_int;
+    /// 1 when the window has the keyboard focus, 0 when not, -1 when the backend can't tell.
+    pub fn BK_window_focused(win: *mut BKWindow) -> c_int;
+    /// Bring the window to the front and focus it; `token` (may be null) is an
+    /// xdg-activation token (Wayland).
+    pub fn BK_window_activate(win: *mut BKWindow, token: *const c_char);
     pub fn BK_window_run();
     pub fn BK_window_wake_init(cb: Option<unsafe extern "C" fn()>) -> c_int;
     pub fn BK_window_wake();

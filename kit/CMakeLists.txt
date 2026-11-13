@@ -173,7 +173,8 @@ elseif(UNIX AND NOT APPLE)
       set(_wl_gen ${CMAKE_CURRENT_BINARY_DIR}/wayland)
       file(MAKE_DIRECTORY ${_wl_gen})
       set(_wl_src)
-      foreach(_p stable/xdg-shell/xdg-shell unstable/xdg-decoration/xdg-decoration-unstable-v1)
+      foreach(_p stable/xdg-shell/xdg-shell unstable/xdg-decoration/xdg-decoration-unstable-v1
+                 staging/xdg-activation/xdg-activation-v1)
         get_filename_component(_n ${_p} NAME)
         add_custom_command(
           OUTPUT ${_wl_gen}/${_n}-client-protocol.h ${_wl_gen}/${_n}-client-protocol.c

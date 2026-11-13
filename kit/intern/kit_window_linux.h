@@ -48,7 +48,9 @@
     X(int, wm_get, (BKWindow * win, const char *key, double *r_a, double *r_b), \
       (win, key, r_a, r_b)) \
     X(void, run, (void), ()) \
-    X(int, pump, (void), ())
+    X(int, pump, (void), ()) \
+    X(int, focused, (BKWindow * win), (win)) \
+    X(void, activate, (BKWindow * win, const char *token), (win, token))
 
 /* The per-backend prototypes (and bk_window_wake_ready). */
 #  define BK_WINDOW_DECLARE(ret, name, params, args) \
@@ -85,6 +87,8 @@ int bk_wl_window_wake_ready(void);
 #    define BK_window_handle bk_x11_window_handle
 #    define BK_window_wm bk_x11_window_wm
 #    define BK_window_wm_get bk_x11_window_wm_get
+#    define BK_window_focused bk_x11_window_focused
+#    define BK_window_activate bk_x11_window_activate
 #    define BK_window_run bk_x11_window_run
 #    define BK_window_pump bk_x11_window_pump
 #    define BK_window_quit bk_x11_window_quit

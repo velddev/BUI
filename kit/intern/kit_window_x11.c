@@ -61,6 +61,7 @@
   F(XFreeGC) \
   F(XFreePixmap) \
   F(XGetSelectionOwner) \
+  F(XGetWindowAttributes) \
   F(XGetWindowProperty) \
   F(XGetWMNormalHints) \
   F(XInitThreads) \
@@ -134,6 +135,7 @@ static int x11_load(void)
 #  define XFreeGC (*p_XFreeGC)
 #  define XFreePixmap (*p_XFreePixmap)
 #  define XGetSelectionOwner (*p_XGetSelectionOwner)
+#  define XGetWindowAttributes (*p_XGetWindowAttributes)
 #  define XGetWindowProperty (*p_XGetWindowProperty)
 #  define XGetWMNormalHints (*p_XGetWMNormalHints)
 #  define XInitThreads (*p_XInitThreads)
@@ -181,6 +183,7 @@ struct BKWindow {
   GC gc;
   int render_pending, frames, cursor, tip_id, next_timer, full;
   int want_frame, frame_vsync;
+  int focused; /* FocusIn / FocusOut */
   double frame_start;
   float scale;
   int w, h;
@@ -652,6 +655,17 @@ static void handle_event(XEvent *ev)
       }
       handle_key(win, &ev->xkey, ev->type == KeyPress);
       break;
+    case FocusIn:
+    case FocusOut:
+      /* NotifyPointer is the pointer's window getting focus events it doesn't hold */
+      if (ev->xfocus.detail != NotifyPointer) {
+        const int focused = ev->type == FocusIn;
+        if (focused != win->focused) {
+          win->focused = focused;
+          BK_window_request_frame(win, 0); /* the host's on_frame reads BK_window_focused */
+        }
+      }
+      break;
     case ClientMessage:
       if ((Atom)ev->xclient.data.l[0] == a_delete) {
         if (!win->cb.on_close || win->cb.on_close(win->cb.data, win)) {
@@ -850,6 +864,42 @@ void BK_window_request_frame(BKWindow *win, int vsync)
 void *BK_window_handle(BKWindow *win)
 {
   return (void *)(uintptr_t)win->xid;
+}
+
+int BK_window_focused(BKWindow *win)
+{
+  return win->xid && win->focused;
+}
+
+/* EWMH activation: _NET_ACTIVE_WINDOW from a pager (source 2), which window managers honour
+ * without focus-stealing prevention, plus the "lift" and "focus" requests for those without
+ * EWMH. The token goes to _NET_STARTUP_ID first, as startup notification hands it over. */
+void BK_window_activate(BKWindow *win, const char *token)
+{
+  if (!win->xid) {
+    return;
+  }
+  if (token && token[0]) {
+    XChangeProperty(g_dpy, win->xid, XInternAtom(g_dpy, "_NET_STARTUP_ID", False), a_utf8, 8,
+                    PropModeReplace, (const unsigned char *)token, (int)strlen(token));
+  }
+  XMapWindow(g_dpy, win->xid);
+  XRaiseWindow(g_dpy, win->xid);
+  XEvent ev;
+  memset(&ev, 0, sizeof(ev));
+  ev.xclient.type = ClientMessage;
+  ev.xclient.window = win->xid;
+  ev.xclient.message_type = XInternAtom(g_dpy, "_NET_ACTIVE_WINDOW", False);
+  ev.xclient.format = 32;
+  ev.xclient.data.l[0] = 2; /* source indication: pager */
+  ev.xclient.data.l[1] = CurrentTime;
+  XSendEvent(g_dpy, RootWindow(g_dpy, DefaultScreen(g_dpy)), False,
+             SubstructureRedirectMask | SubstructureNotifyMask, &ev);
+  XWindowAttributes attrs; /* focusing a window that isn't viewable yet is a BadMatch */
+  if (XGetWindowAttributes(g_dpy, win->xid, &attrs) && attrs.map_state == IsViewable) {
+    XSetInputFocus(g_dpy, win->xid, RevertToParent, CurrentTime);
+  }
+  XFlush(g_dpy);
 }
 
 /* GHOST_WindowX11: size hints for minsize / maxsize / resizable, moves for pos */
