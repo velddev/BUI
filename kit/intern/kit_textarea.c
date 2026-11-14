@@ -544,6 +544,11 @@ static int ta_key(BKNode *n, BKEvent *e)
   }
   else if (ctrl && bk_keysym_is(ks, "v")) {
     char *clip = bk_clipboard_get(ctx);
+    if (clip && !clip[0]) {
+      /* nothing to paste: no edit (no undo step, no change event) */
+      free(clip);
+      clip = NULL;
+    }
     if (clip) {
       bk_undo_record(n, 1);
       delete_selection(n);

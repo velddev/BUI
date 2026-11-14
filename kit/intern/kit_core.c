@@ -1924,15 +1924,16 @@ void bk_end_modal(BKContext *ctx)
   bk_ctx_request(ctx);
 }
 
-static char *g_clipboard = NULL; /* fallback when the host has none */
+static char *g_clipboard = NULL; /* the clipboard when the host has none */
 
+/* The clipboard's text. A host with a clipboard answers alone: its NULL means the system
+ * clipboard holds no text (an image, say, copied since), and the text this process copied
+ * last is not pasted in its place (whichever was set last wins). Only a host without one
+ * (headless) pastes from the process's own copy. */
 char *bk_clipboard_get(BKContext *ctx)
 {
   if (ctx && ctx->host.clipboard_get) {
-    char *s = ctx->host.clipboard_get(ctx->host.data);
-    if (s) {
-      return s;
-    }
+    return ctx->host.clipboard_get(ctx->host.data);
   }
   return bk_strdup(g_clipboard ? g_clipboard : "");
 }

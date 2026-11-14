@@ -876,3 +876,53 @@ fn back_and_forward_buttons_reach_the_window_wherever_the_pointer_is() {
         }
     });
 }
+
+struct Pasted {
+    text: String,
+    changes: usize,
+}
+
+impl Render for Pasted {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        body().m_0().child(textarea().id("box").w(px(300.0)).h(px(40.0)).value(self.text.clone()).on_change(cx.listener(
+            |this, e: &ChangeEvent, _, cx| {
+                this.text = e.value.to_string();
+                this.changes += 1;
+                cx.notify();
+            },
+        )))
+    }
+}
+
+/// Ctrl+V pastes what the clipboard holds now: text copied in this process is not pasted
+/// once something that isn't text (an image) was copied since, and an empty paste is no edit.
+#[test]
+fn a_paste_takes_the_clipboard_as_it_is_now() {
+    Application::headless().run(|cx| {
+        let win = open(cx, 400.0, 100.0, Pasted { text: String::new(), changes: 0 });
+        let id = win.id;
+        cx.draw(id);
+        let b = cx.element_bounds(id, "box").unwrap();
+        cx.simulate_click(id, b.origin.x + 4.0, b.origin.y + 4.0);
+        let read = |cx: &mut App| {
+            let v = win.root().read(cx);
+            (v.text.clone(), v.changes)
+        };
+        // copied here: on the clipboard, and pasted
+        win.update(cx, |_, w, _| w.write_clipboard("copied before")).unwrap();
+        assert_eq!(headless_clipboard().as_deref(), Some("copied before"));
+        cx.simulate_key_with(id, "v", "v", true, false);
+        assert_eq!(read(cx), ("copied before".to_string(), 1));
+        // an image copied since in another app: nothing goes in, no change
+        set_headless_clipboard(None);
+        cx.simulate_key_with(id, "v", "v", true, false);
+        assert_eq!(read(cx), ("copied before".to_string(), 1), "the older text is not pasted");
+        set_headless_clipboard(Some(""));
+        cx.simulate_key_with(id, "v", "v", true, false);
+        assert_eq!(read(cx).1, 1, "an empty paste is no edit");
+        set_headless_clipboard(Some(" new"));
+        cx.simulate_key_with(id, "v", "v", true, false);
+        assert_eq!(read(cx), ("copied before new".to_string(), 2));
+        set_headless_clipboard(None);
+    });
+}

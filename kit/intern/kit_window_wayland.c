@@ -786,6 +786,10 @@ static char *host_clipboard_get(void *data)
   if (g.source && g_clip_text) {
     return strdup(g_clip_text); /* ours */
   }
+  if (!g.data_manager || !g.data_device) {
+    /* no clipboard to share: the text copied here */
+    return g_clip_text ? strdup(g_clip_text) : NULL;
+  }
   if (!g.offer || !g.offer_mime) {
     return NULL;
   }
@@ -823,11 +827,11 @@ static char *host_clipboard_get(void *data)
 
 static void host_clipboard_set(void *data, const char *text)
 {
+  free(g_clip_text);
+  g_clip_text = strdup(text ? text : "");
   if (!g.data_manager || !g.data_device) {
     return;
   }
-  free(g_clip_text);
-  g_clip_text = strdup(text ? text : "");
   struct wl_data_source *src = wl_data_device_manager_create_data_source(g.data_manager);
   wl_data_source_add_listener(src, &source_listener, NULL);
   wl_data_source_offer(src, "text/plain;charset=utf-8");

@@ -980,6 +980,52 @@ fn with_running_app(f: impl FnOnce(&mut App)) -> bool {
 
 unsafe extern "C" fn noop(_: *mut c_void) {}
 
+/// What headless windows' clipboard holds: text, or None for something that isn't text.
+static HEADLESS_CLIPBOARD: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// Put `text` on headless windows' clipboard, one for the whole process like a desktop's;
+/// None: it holds something that isn't text (an image copied in another app, say), and a
+/// paste puts nothing in, whatever text was copied before. [`Window::write_clipboard`] and
+/// a text box's copy put their text there too. Tests use it to stand in for the system's.
+pub fn set_headless_clipboard(text: Option<&str>) {
+    *HEADLESS_CLIPBOARD.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = text.map(str::to_owned);
+}
+
+/// The text on headless windows' clipboard ([`set_headless_clipboard`]); None when it holds
+/// none.
+pub fn headless_clipboard() -> Option<String> {
+    HEADLESS_CLIPBOARD.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
+}
+
+unsafe extern "C" fn headless_clipboard_get(_: *mut c_void) -> *mut c_char {
+    let Some(text) = headless_clipboard() else { return std::ptr::null_mut() };
+    let c = CString::new(text.replace('\0', "")).unwrap_or_default();
+    let bytes = c.as_bytes_with_nul();
+    // SAFETY: the kit frees what it gets with free(): a malloc'd copy, NUL-terminated.
+    unsafe {
+        let out = libc_malloc(bytes.len()) as *mut c_char;
+        if !out.is_null() {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr() as *const c_char, out, bytes.len());
+        }
+        out
+    }
+}
+
+unsafe extern "C" fn headless_clipboard_set(_: *mut c_void, text: *const c_char) {
+    let text = if text.is_null() {
+        String::new()
+    } else {
+        // SAFETY: the kit passes a NUL-terminated string.
+        unsafe { CStr::from_ptr(text) }.to_string_lossy().into_owned()
+    };
+    set_headless_clipboard(Some(&text));
+}
+
+unsafe extern "C" {
+    #[link_name = "malloc"]
+    fn libc_malloc(size: usize) -> *mut c_void;
+}
+
 // ==========================================================================
 // Windows
 
@@ -1068,8 +1114,10 @@ impl Window {
                 request: Some(noop),
                 set_cursor: None,
                 warp: None,
-                clipboard_get: None,
-                clipboard_set: None,
+                // headless: the process's stand-in for a desktop's clipboard
+                // ([`set_headless_clipboard`]); a native window's host replaces these
+                clipboard_get: if headless { Some(headless_clipboard_get) } else { None },
+                clipboard_set: if headless { Some(headless_clipboard_set) } else { None },
                 schedule: None,
                 emit: Some(on_emit),
             };

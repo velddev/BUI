@@ -137,7 +137,7 @@ typedef struct BKHost {
   void (*request)(void *data);                     /* schedule a render */
   void (*set_cursor)(void *data, int cursor);
   void (*warp)(void *data, int x, int y);          /* move the pointer */
-  char *(*clipboard_get)(void *data);              /* malloc'd UTF-8 or NULL */
+  char *(*clipboard_get)(void *data); /* malloc'd UTF-8; NULL: no text (nothing pastes) */
   void (*clipboard_set)(void *data, const char *text);
   void (*schedule)(void *data, int ms, int timer); /* call BK_timer(timer) later */
   void (*emit)(void *data, BKNode *node, int kind, void *ref, double a, double b);
