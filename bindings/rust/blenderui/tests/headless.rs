@@ -690,6 +690,32 @@ impl Render for Panner {
     }
 }
 
+/// The wheel's modifiers, as each scroll came.
+struct Wheel {
+    heard: std::rc::Rc<std::cell::RefCell<Vec<(f32, bool)>>>,
+}
+
+impl Render for Wheel {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let heard = self.heard.clone();
+        body().m_0().child(div().id("wheel").w(px(100.0)).h(px(100.0))
+            .on_scroll_wheel(move |e, _, _| heard.borrow_mut().push((e.delta, e.modifiers.control))))
+    }
+}
+
+#[test]
+fn a_scroll_can_come_with_modifiers() {
+    Application::headless().run(|cx| {
+        let heard = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let win = open(cx, 200.0, 100.0, Wheel { heard: heard.clone() });
+        let id = win.id;
+        cx.draw(id);
+        cx.simulate_scroll(id, 50.0, 50.0, 1);
+        cx.simulate_scroll_mods(id, 50.0, 50.0, -2, Modifiers { control: true, ..Modifiers::default() });
+        assert_eq!(*heard.borrow(), vec![(1.0, false), (-2.0, true)]);
+    });
+}
+
 #[test]
 fn a_middle_press_on_what_hears_it_is_a_press_and_no_autoscroll() {
     Application::headless().run(|cx| {

@@ -828,6 +828,16 @@ impl App {
         });
     }
 
+    /// Scroll the wheel at (x, y) with these modifier keys held (Ctrl+wheel), as the host
+    /// would report them.
+    pub fn simulate_scroll_mods(&mut self, window: WindowId, x: f32, y: f32, lines: i32, mods: crate::Modifiers) {
+        let mods = mods.to_kit();
+        self.simulate_mouse_move(window, x, y);
+        self.input(window, |ctx, s| unsafe {
+            sys::BK_wheel(ctx, (x * s) as c_int, (y * s) as c_int, lines, mods);
+        });
+    }
+
     /// Resize the window to `w` x `h` logical pixels, as a host's configure
     /// does: the next frame is laid out at the new size.
     pub fn simulate_resize(&mut self, window: WindowId, w: f32, h: f32) {
