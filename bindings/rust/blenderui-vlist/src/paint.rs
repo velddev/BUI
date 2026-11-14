@@ -1,7 +1,7 @@
 //! Painting a list: only the placed items, straight into the shared
 //! [`PaintSink`] (no element per item), clipped to the viewport, then the
 //! scrollbar. What an item looks like is the [`ItemPainter`]'s business
-//! (chat: [`crate::chat`]); what is painted is decided by the frame
+//! (chat: [`crate::chat`]), and so is what stays over them ([`ItemPainter::over`]); what is painted is decided by the frame
 //! ([`crate::ListView::layout`]). Wrapped lines come from the layout cache:
 //! scrolling only moves them, so a steady frame is cache hits and sink calls.
 //!
@@ -13,7 +13,7 @@ use blenderui_paint::{PaintSink, Palette, Rect};
 use crate::measure::Measurer;
 use crate::scrollbar::Thumb;
 use crate::source::Record;
-use crate::view::ListView;
+use crate::view::{ListView, Placed};
 use crate::wrap::Lines;
 
 /// Draws one item.
@@ -24,6 +24,12 @@ pub trait ItemPainter {
     fn item(&self, sink: &mut dyn PaintSink, r: Rect, rec: &Record<'_>, lines: &Lines);
     /// An item not measured or not loaded: a placeholder in `r`.
     fn skeleton(&self, sink: &mut dyn PaintSink, r: Rect, rec: Option<&Record<'_>>);
+    /// Painted over the items, clipped to the viewport and under the scrollbar, with the
+    /// frame's `placed` items (viewport coordinates, first to last): what stays put while
+    /// the items scroll under it, such as a section's sticky header. Nothing by default.
+    fn over(&self, sink: &mut dyn PaintSink, w: f32, h: f32, placed: &[Placed]) {
+        let _ = (sink, w, h, placed);
+    }
 }
 
 impl ListView {
@@ -52,6 +58,7 @@ impl ListView {
                     other => style.skeleton(s, r, other.as_ref()),
                 }
             }
+            style.over(s, w, h, placed);
             if let Some(t) = thumb {
                 t.paint(s, &pal, w, h, self.bar);
             }

@@ -451,3 +451,55 @@ fn faces_are_measured_in_their_font() {
     let placed = l.layout(&mut tw).to_vec();
     assert_eq!((placed[0].h, placed[1].h), (24.0, 24.0));
 }
+
+/// Records what is painted, `over` last.
+struct Over(Palette, std::cell::RefCell<Vec<String>>);
+
+impl Measurer for Over {
+    fn font_size(&self) -> f32 {
+        10.0
+    }
+    fn line_height(&self) -> f32 {
+        12.0
+    }
+    fn wrap_width(&self, _: &Record<'_>, _: f32) -> f32 {
+        100.0
+    }
+    fn chrome(&self, _: &Record<'_>) -> f32 {
+        0.0
+    }
+    fn estimator(&self, list_width: f32) -> Estimator {
+        Estimator::new(0.0, 12.0, 5.0, f64::from(list_width))
+    }
+}
+
+impl ItemPainter for Over {
+    fn palette(&self) -> &Palette {
+        &self.0
+    }
+    fn item(&self, _: &mut dyn PaintSink, _: Rect, rec: &Record<'_>, _: &Lines) {
+        self.1.borrow_mut().push(format!("item {}", rec.id));
+    }
+    fn skeleton(&self, _: &mut dyn PaintSink, _: Rect, _: Option<&Record<'_>>) {}
+    fn over(&self, _: &mut dyn PaintSink, w: f32, h: f32, placed: &[blenderui_vlist::Placed]) {
+        let first = placed.first().map_or(usize::MAX, |p| p.item);
+        self.1.borrow_mut().push(format!("over {w}x{h} from {first} y {}", placed.first().map_or(0.0, |p| p.y)));
+    }
+}
+
+#[test]
+fn over_paints_after_the_items_with_where_they_are() {
+    let msgs = (0..100).map(|k| Message { id: k, time: 0, sender: 0, flags: 0, media_h: 0, text: "a".into(), media: String::new() }).collect();
+    let mut l = List::new(VecSource::from_messages(msgs), Over(Palette::blender_dark(), Default::default()), 600.0, 120.0, Options::default()).unwrap();
+    l.layout(&mut tw);
+    l.paint(&mut Null::default());
+    let painted = l.style.1.take();
+    assert_eq!(painted.len(), 11, "ten 12 px items fill 120 px, then over: {painted:?}");
+    assert_eq!(painted[0], "item 0");
+    assert_eq!(painted.last().unwrap(), "over 600x120 from 0 y 0");
+    // scrolled 18 px: item 1 half above the top
+    l.view.scroll_by(18.0);
+    l.layout(&mut tw);
+    l.paint(&mut Null::default());
+    assert_eq!(l.style.1.take().last().unwrap(), "over 600x120 from 1 y -6");
+}
