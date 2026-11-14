@@ -674,6 +674,37 @@ fn a_middle_drag_autoscrolls_a_scroll_container_and_not_plain_space() {
     });
 }
 
+/// A box that hears the wheel and the middle button's press itself (a pan), noting the presses.
+struct Panner {
+    downs: std::rc::Rc<std::cell::Cell<usize>>,
+}
+
+impl Render for Panner {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let downs = self.downs.clone();
+        body().m_0().bg(rgb(0x000000)).child(
+            div().id("pan").w(px(100.0)).h(px(100.0))
+                .on_scroll_wheel(|_, _, _| {})
+                .on_mouse_down(MouseButton::Middle, move |_, _, _| downs.set(downs.get() + 1)),
+        )
+    }
+}
+
+#[test]
+fn a_middle_press_on_what_hears_it_is_a_press_and_no_autoscroll() {
+    Application::headless().run(|cx| {
+        let downs = std::rc::Rc::new(std::cell::Cell::new(0));
+        let win = open(cx, 200.0, 100.0, Panner { downs: downs.clone() });
+        let id = win.id;
+        cx.draw(id);
+        cx.simulate_middle(id, 50.0, 50.0, true);
+        assert!(!cx.window(id).unwrap().is_autoscrolling(), "the box takes the middle button");
+        assert_eq!(downs.get(), 1, "and hears the press");
+        cx.simulate_middle(id, 50.0, 50.0, false);
+        assert!(!cx.window(id).unwrap().is_autoscrolling());
+    });
+}
+
 /// A text box and a plain box, noting each mouse-down's click count.
 struct Triple {
     downs: std::rc::Rc<std::cell::RefCell<Vec<(&'static str, usize)>>>,

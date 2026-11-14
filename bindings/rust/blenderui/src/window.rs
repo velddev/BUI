@@ -2114,6 +2114,14 @@ impl Window {
     fn start_autoscroll(&mut self, x: f32, y: f32) -> bool {
         let path = self.path_at(x, y);
         let Some(f) = &self.frame else { return false };
+        // an element that hears the middle button's press itself (a pan) takes it instead
+        let claimed = path.iter().any(|k| f.by_key().get(k).is_some_and(|&i| {
+            f.el(i).and_then(|e| e.listeners.as_deref())
+                .is_some_and(|l| l.mouse_down.iter().any(|(b, _)| *b == Some(MouseButton::Middle)))
+        }));
+        if claimed {
+            return false;
+        }
         let scrolls = path.iter().any(|k| f.by_key().get(k).is_some_and(|&i| {
             let (rx, ry) = f.nodes[i].scroll_range;
             rx > 0.0 || ry > 0.0 || f.el(i).and_then(|e| e.listeners.as_deref()).is_some_and(|l| !l.scroll.is_empty())

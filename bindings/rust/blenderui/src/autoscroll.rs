@@ -1,7 +1,9 @@
 //! Browser-style middle-button autoscroll.
 //!
 //! A middle press over something that scrolls (a scroll container, or an element that hears the
-//! wheel, as a virtual list does) anchors there: while the button is held, the pointer's distance
+//! wheel, as a virtual list does) anchors there, unless something under it listens for the
+//! middle button's press itself (`on_mouse_down(MouseButton::Middle, ..)`: an image viewer's
+//! pan), which then hears it as any press. While the button is held, the pointer's distance
 //! from the anchor scrolls it, faster the further it is, every frame; the release stops it. A
 //! press and release without leaving the anchor's dead zone makes it sticky: moving the pointer
 //! scrolls until any click, Escape or the wheel. The window captures the pointer meanwhile
