@@ -1,6 +1,6 @@
 //! A title bar drawn by the app: the areas the native host is handed agree with the window's
 //! own hit test (a tab on the bar is no drag area, a plain box on it is, a menu's backdrop covers the bar), and the
-//! buttons zoom and minimise the window.
+//! buttons zoom, minimise and close the window.
 
 use blenderui::prelude::*;
 
@@ -27,7 +27,10 @@ impl Render for Bar {
                         area(if zoomed { "restore" } else { "max" }, "width: 46px; height: 48px", WindowControlArea::Max)
                             .on_click(cx.listener(|_, _: &ClickEvent, window, _| window.zoom_window())),
                     )
-                    .child(area("close", "width: 46px; height: 48px", WindowControlArea::Close)),
+                    .child(
+                        area("close", "width: 46px; height: 48px", WindowControlArea::Close)
+                            .on_click(cx.listener(|_, _: &ClickEvent, window, cx| cx.close_window(window.window_handle()))),
+                    ),
             )
             .child(div().id("body").style("width: 400px; height: 100px"))
             .children(self.menu.then(|| {
@@ -122,5 +125,22 @@ fn the_maximise_button_zooms_and_restores() {
         assert!(!cx.window(w.id).unwrap().is_maximized());
         w.update(cx, |_, window, _| window.minimize_window());
         assert!(cx.window(w.id).unwrap().is_minimized());
+    });
+}
+
+#[test]
+fn the_close_button_closes_its_own_window() {
+    Application::headless().run(|cx| {
+        let w = open(cx, true, false);
+        let other = open(cx, true, false);
+        cx.draw(w.id);
+        assert!(!cx.window(w.id).unwrap().is_closed());
+        cx.simulate_click(w.id, 377.0, 20.0);
+        assert!(cx.window(w.id).unwrap().is_closed(), "closed from its own listener");
+        assert!(!cx.window(other.id).unwrap().is_closed());
+        w.update(cx, |_, window, cx| cx.close_window(window.window_handle()));
+        assert!(cx.window(w.id).unwrap().is_closed());
+        other.update(cx, |_, window, cx| cx.close_window(window.window_handle()));
+        assert!(cx.window(other.id).unwrap().is_closed(), "closed from an update");
     });
 }

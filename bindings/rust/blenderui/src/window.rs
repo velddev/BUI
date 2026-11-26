@@ -198,7 +198,7 @@ impl<V: 'static> WindowHandle<V> {
         if cx.notified != notified {
             w.refresh(); // `cx.notify()` ran while this window was out of the list
         }
-        cx.windows[self.id.0] = Some(w);
+        cx.hand_back(self.id.0, w);
         Some(r)
     }
 }
@@ -380,6 +380,8 @@ pub struct App {
     remote: Option<(std::sync::mpsc::Sender<RemoteJob>, std::sync::mpsc::Receiver<RemoteJob>)>,
     /// Called when the user closes a window.
     close_hooks: Vec<Box<dyn FnMut(WindowId, &mut App)>>,
+    /// Windows [`App::close_window`] closed while they were out of the list.
+    closing: Vec<usize>,
     /// Counts `notify_all` calls (see `WindowHandle::update`).
     notified: u64,
 }
@@ -425,7 +427,7 @@ fn wm_min_size(m: Size<Pixels>) -> (f64, f64) {
 impl App {
     fn create(headless: bool) -> App {
         App { windows: Vec::new(), entities: Vec::new(), headless, globals: HashMap::new(), propagate: true,
-              remote: None, close_hooks: Vec::new(), notified: 0 }
+              remote: None, close_hooks: Vec::new(), closing: Vec::new(), notified: 0 }
     }
 
     /// Create an entity (gpui's `cx.new`).
@@ -535,12 +537,13 @@ impl App {
     }
 
     /// Close a window (as if the user had).
+    /// A window's own listener closes it too: the window is out of the list while it
+    /// handles an event, so it closes when handed back.
     pub fn close_window(&mut self, id: WindowId) {
-        if let Some(w) = self.windows.get_mut(id.0).and_then(|w| w.as_deref_mut()) {
-            w.closed = true;
-            if let Some(n) = w.native {
-                unsafe { sys::BK_window_close(n) };
-            }
+        match self.windows.get_mut(id.0) {
+            Some(Some(w)) => w.close(),
+            Some(None) if !self.closing.contains(&id.0) => self.closing.push(id.0),
+            _ => {}
         }
     }
 
@@ -593,8 +596,16 @@ impl App {
     fn with_window<R>(&mut self, id: usize, f: impl FnOnce(&mut Window, &mut App) -> R) -> Option<R> {
         let mut w = self.windows.get_mut(id)?.take()?;
         let r = f(&mut w, self);
-        self.windows[id] = Some(w);
+        self.hand_back(id, w);
         Some(r)
+    }
+
+    fn hand_back(&mut self, id: usize, mut w: Box<Window>) {
+        if let Some(i) = self.closing.iter().position(|&c| c == id) {
+            self.closing.swap_remove(i);
+            w.close();
+        }
+        self.windows[id] = Some(w);
     }
 
     /// Handle queued kit events, then re-render what changed.
@@ -1470,6 +1481,19 @@ impl Window {
             // SAFETY: a live native window.
             Some(n) => unsafe { sys::BK_window_wm(n, c"state".as_ptr(), 1.0, 0.0) },
             None => self.minimized = true,
+        }
+    }
+
+    /// Whether the window was closed, by the user or [`App::close_window`].
+    pub fn is_closed(&self) -> bool {
+        self.closed
+    }
+
+    fn close(&mut self) {
+        self.closed = true;
+        if let Some(n) = self.native {
+            // SAFETY: a live native window; closing a closed one does nothing.
+            unsafe { sys::BK_window_close(n) };
         }
     }
 
