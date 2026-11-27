@@ -34,6 +34,40 @@ pub fn speed(dy: f32) -> f32 {
     (past * 7.0 + past * past * 0.04).min(MAX_SPEED) * dy.signum()
 }
 
+pub const CURSOR_STILL: i32 = 13;
+pub const CURSOR_UP: i32 = 14;
+pub const CURSOR_DOWN: i32 = 15;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Heading {
+    Still,
+    Up,
+    Down,
+}
+
+impl Heading {
+    #[must_use]
+    pub fn of(dy: f32) -> Heading {
+        let v = speed(dy);
+        if v < 0.0 {
+            Heading::Up
+        } else if v > 0.0 {
+            Heading::Down
+        } else {
+            Heading::Still
+        }
+    }
+
+    #[must_use]
+    pub fn cursor(self) -> i32 {
+        match self {
+            Heading::Still => CURSOR_STILL,
+            Heading::Up => CURSOR_UP,
+            Heading::Down => CURSOR_DOWN,
+        }
+    }
+}
+
 /// An autoscroll in progress.
 #[derive(Clone, Debug)]
 pub(crate) struct Autoscroll {
@@ -112,5 +146,17 @@ mod tests {
         // up is negative
         assert_eq!(a.step(11.0, (100.0, 0.0)), Some(0.0));
         assert!(a.step(11.1, (100.0, 0.0)).unwrap() < 0.0);
+    }
+
+    #[test]
+    fn each_way_has_its_own_pan_cursor_and_the_dead_zone_the_still_one() {
+        assert_eq!(Heading::of(0.0), Heading::Still);
+        assert_eq!(Heading::of(DEAD_ZONE), Heading::Still);
+        assert_eq!(Heading::of(-DEAD_ZONE), Heading::Still);
+        assert_eq!(Heading::of(-40.0), Heading::Up);
+        assert_eq!(Heading::of(40.0), Heading::Down);
+        let cursors = [Heading::Still, Heading::Up, Heading::Down].map(Heading::cursor);
+        assert_eq!(cursors, [CURSOR_STILL, CURSOR_UP, CURSOR_DOWN]);
+        assert!(cursors[0] != cursors[1] && cursors[1] != cursors[2] && cursors[0] != cursors[2]);
     }
 }

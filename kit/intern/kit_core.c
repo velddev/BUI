@@ -1049,6 +1049,10 @@ int BK_set_num(BKNode *n, const char *key, double v)
   }
   if (strcmp(key, "cursor") == 0) { /* < 0: back to the class cursor */
     n->cursor_override = v < 0 ? 0 : (int)v + 1;
+    BKContext *ctx = bk_ctx(n);
+    if (ctx && (ctx->hover == n || ctx->grab == n || ctx->capture == n)) {
+      bk_update_cursor(ctx);
+    }
     return 1;
   }
   if (strcmp(key, "current") == 0) {
@@ -2401,7 +2405,7 @@ static void update_cursor(BKContext *ctx)
     name = ctx->grab->cls->drag_cursor;
   }
   else {
-    BKNode *n = ctx->grab ? ctx->grab : ctx->hover;
+    BKNode *n = ctx->capture ? ctx->capture : ctx->grab ? ctx->grab : ctx->hover;
     name = BK_CURSOR_DEFAULT;
     if (n && n->cursor_override) {
       name = n->cursor_override - 1;
@@ -3480,7 +3484,12 @@ int BK_key_release(BKContext *ctx, const char *keysym, int mods)
 
 void BK_capture_pointer(BKContext *ctx, BKNode *node)
 {
+  BKNode *was = ctx->capture;
   ctx->capture = node && (node->flags & NF_EVENTS) ? node : NULL;
+  if (was && !ctx->capture) {
+    set_hover(ctx, hit_all(ctx, ctx->pointer_x, ctx->pointer_y));
+  }
+  update_cursor(ctx);
 }
 
 int BK_button(BKContext *ctx, int x, int y, int button, int release, int mods)

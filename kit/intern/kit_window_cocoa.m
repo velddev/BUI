@@ -860,6 +860,12 @@ static NSCursor *ns_cursor(int c)
       return [NSCursor openHandCursor];
     case BK_CURSOR_NOT_ALLOWED:
       return [NSCursor operationNotAllowedCursor];
+    case BK_CURSOR_SCROLL_NS:
+      return [NSCursor resizeUpDownCursor];
+    case BK_CURSOR_SCROLL_N:
+      return [NSCursor resizeUpCursor];
+    case BK_CURSOR_SCROLL_S:
+      return [NSCursor resizeDownCursor];
   }
   return [NSCursor arrowCursor];
 }
@@ -896,7 +902,7 @@ static int pointer_inside(BKWindow *win)
 static void host_set_cursor(void *data, int c)
 {
   BKWindow *win = (BKWindow *)data;
-  win->cursor = BK_CLAMP(c, 0, 7);
+  win->cursor = BK_CLAMP(c, 0, BK_CURSOR_COUNT - 1);
   if (!win->nswin) {
     return;
   }

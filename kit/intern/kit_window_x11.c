@@ -188,7 +188,7 @@ struct BKWindow {
   float scale;
   int w, h;
   Timer timers[MAX_TIMERS];
-  Cursor cursors[12];
+  Cursor cursors[BK_CURSOR_COUNT];
   struct BKWindow *next;
 };
 
@@ -285,7 +285,7 @@ static void host_set_cursor(void *data, int c)
   if (!win->xid) {
     return;
   }
-  c = BK_CLAMP(c, 0, 11);
+  c = BK_CLAMP(c, 0, BK_CURSOR_COUNT - 1);
   win->cursor = c;
   if (!win->cursors[c]) {
     if (c == BK_CURSOR_NONE) { /* an empty 1x1 bitmap */
@@ -296,12 +296,11 @@ static void host_set_cursor(void *data, int c)
       XFreePixmap(g_dpy, p);
     }
     else {
-      static const unsigned shapes[12] = {XC_left_ptr,     XC_sb_h_double_arrow,
-                                          XC_sb_v_double_arrow, XC_xterm,
-                                          XC_crosshair,    XC_hand2,
-                                          XC_fleur,        XC_left_ptr,
-                                          XC_bottom_left_corner, XC_bottom_right_corner,
-                                          XC_X_cursor,     XC_watch};
+      static const unsigned shapes[BK_CURSOR_COUNT] = {
+          XC_left_ptr,     XC_sb_h_double_arrow,  XC_sb_v_double_arrow,   XC_xterm,
+          XC_crosshair,    XC_hand2,              XC_fleur,               XC_left_ptr,
+          XC_bottom_left_corner, XC_bottom_right_corner, XC_X_cursor,     XC_watch,
+          XC_watch,        XC_sb_v_double_arrow,  XC_sb_up_arrow,         XC_sb_down_arrow};
       win->cursors[c] = XCreateFontCursor(g_dpy, shapes[c]);
     }
   }

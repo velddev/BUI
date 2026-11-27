@@ -210,19 +210,31 @@ fn the_middle_button_held_and_moved_scrolls_and_its_release_stops_it() {
         let start = offset(cx, &chat);
         cx.simulate_middle(id, 300.0, 300.0, true);
         assert!(cx.window(id).unwrap().is_autoscrolling());
-        assert_eq!(cx.window(id).unwrap().cursor_shape(), 6, "the all-scroll cursor");
+        use blenderui::autoscroll::{CURSOR_DOWN, CURSOR_STILL, CURSOR_UP};
+        let shown = |cx: &App| {
+            let w = cx.window(id).unwrap();
+            (w.cursor_shape(), w.native_cursor())
+        };
+        assert_eq!(shown(cx), (CURSOR_STILL, CURSOR_STILL), "the still pan cursor, shown under the capture");
+        assert_eq!(cx.window(id).unwrap().autoscroll_anchor(), Some((300.0, 300.0)));
         // in the dead zone: nothing moves
         cx.simulate_mouse_move(id, 303.0, 305.0);
         frames(cx, id, 5);
         assert_eq!(offset(cx, &chat), start);
+        assert_eq!(shown(cx), (CURSOR_STILL, CURSOR_STILL), "still in the dead zone");
+        cx.simulate_mouse_move(id, 300.0, 400.0);
+        assert_eq!(shown(cx), (CURSOR_DOWN, CURSOR_DOWN), "below the anchor: the down pan cursor");
         // above the anchor: up, faster further out
         cx.simulate_mouse_move(id, 300.0, 200.0);
+        assert_eq!(shown(cx), (CURSOR_UP, CURSOR_UP), "above the anchor: the up pan cursor");
         frames(cx, id, 10);
         let up = offset(cx, &chat);
         assert!(up.0 < start.0, "{up:?} {start:?}");
         cx.simulate_middle(id, 300.0, 200.0, false);
-        assert!(!cx.window(id).unwrap().is_autoscrolling());
-        assert_ne!(cx.window(id).unwrap().cursor_shape(), 6);
+        let w = cx.window(id).unwrap();
+        assert!(!w.is_autoscrolling());
+        assert_eq!(w.autoscroll_anchor(), None);
+        assert!(!(CURSOR_STILL..=CURSOR_DOWN).contains(&w.native_cursor()), "the usual cursor again: {}", w.native_cursor());
         frames(cx, id, 10);
         assert_eq!(offset(cx, &chat), up, "the release stopped it");
     });
@@ -251,6 +263,34 @@ fn a_still_middle_click_autoscrolls_until_escape_a_click_or_the_wheel() {
             let after = offset(cx, &chat);
             frames(cx, id, 8);
             assert_eq!(offset(cx, &chat), after, "{exit}: stopped");
+        }
+    });
+}
+
+#[test]
+fn autoscroll_ends_when_the_window_loses_focus_held_or_sticky() {
+    run("dark", |cx| {
+        let (id, chat) = open(cx, 5_000);
+        frame(cx, id);
+        cx.simulate_activation(id, true);
+        for held in [true, false] {
+            cx.simulate_middle(id, 300.0, 300.0, true);
+            if !held {
+                cx.simulate_middle(id, 300.0, 300.0, false);
+            }
+            assert!(cx.window(id).unwrap().is_autoscrolling(), "held {held}");
+            cx.simulate_mouse_move(id, 300.0, 150.0);
+            frames(cx, id, 8);
+            cx.simulate_activation(id, false);
+            assert!(!cx.window(id).unwrap().is_autoscrolling(), "held {held}: focus lost");
+            let after = offset(cx, &chat);
+            frames(cx, id, 8);
+            assert_eq!(offset(cx, &chat), after, "held {held}: stopped");
+            if held {
+                cx.simulate_middle(id, 300.0, 150.0, false);
+                assert!(!cx.window(id).unwrap().is_autoscrolling(), "the late release starts nothing");
+            }
+            cx.simulate_activation(id, true);
         }
     });
 }

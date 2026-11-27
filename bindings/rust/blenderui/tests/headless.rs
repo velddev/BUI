@@ -674,6 +674,97 @@ fn a_middle_drag_autoscrolls_a_scroll_container_and_not_plain_space() {
     });
 }
 
+struct Strips;
+
+impl Render for Strips {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        body().m_0().flex().flex_row().bg(rgb(0x000000)).on_scroll_wheel(|_, _, _| {})
+            .child(div().id("sideways").w(px(100.0)).h(px(100.0)).overflow_x_scroll().overflow_y_hidden()
+                .child(div().w(px(400.0)).h(px(100.0))))
+            .child(div().id("both").w(px(100.0)).h(px(100.0)).overflow_scroll()
+                .child(div().w(px(400.0)).h(px(400.0))))
+    }
+}
+
+#[test]
+fn autoscroll_only_scrolls_up_and_down_and_the_wheel_still_scrolls_a_strip_sideways() {
+    Application::headless().run(|cx| {
+        let win = open(cx, 220.0, 100.0, Strips);
+        let id = win.id;
+        cx.draw(id);
+        let frames = |cx: &mut App| {
+            for _ in 0..10 {
+                cx.advance_clock(std::time::Duration::from_millis(16));
+                cx.draw(id);
+            }
+        };
+        let at = |cx: &App, el: &str| cx.window(id).unwrap().scroll_offset(el);
+        cx.simulate_mouse_move(id, 50.0, 20.0);
+        cx.simulate_middle(id, 50.0, 20.0, true);
+        assert!(!cx.window(id).unwrap().is_autoscrolling(), "a strip that only scrolls sideways doesn't autoscroll, though the page hears the wheel");
+        cx.simulate_mouse_move(id, 50.0, 90.0);
+        frames(cx);
+        cx.simulate_middle(id, 50.0, 90.0, false);
+        assert_eq!(at(cx, "sideways"), (0.0, 0.0), "pointing below it moves nothing");
+        cx.simulate_mouse_move(id, 150.0, 20.0);
+        cx.simulate_middle(id, 150.0, 20.0, true);
+        assert!(cx.window(id).unwrap().is_autoscrolling());
+        cx.simulate_mouse_move(id, 150.0, 90.0);
+        assert_eq!(cx.window(id).unwrap().native_cursor(), blenderui::autoscroll::CURSOR_DOWN);
+        frames(cx);
+        let (x, y) = at(cx, "both");
+        assert!(x == 0.0 && y > 0.0, "below the anchor it scrolls down, never sideways: {x} {y}");
+        cx.simulate_middle(id, 150.0, 90.0, false);
+        assert!(!cx.window(id).unwrap().is_autoscrolling());
+        cx.simulate_scroll(id, 50.0, 50.0, -2);
+        cx.draw(id);
+        assert!(at(cx, "sideways").0 > 0.0, "the wheel over the strip still scrolls it sideways");
+    });
+}
+
+struct ScrollerBesideField;
+
+impl Render for ScrollerBesideField {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        body().m_0().flex().flex_row().bg(rgb(0x000000))
+            .child(div().id("scroller").w(px(100.0)).h(px(100.0)).overflow_y_scroll()
+                .child(div().w(px(100.0)).h(px(400.0))))
+            .child(input().id("field").w(px(100.0)))
+    }
+}
+
+#[test]
+fn an_autoscroll_ending_over_a_text_field_shows_its_text_cursor_at_once() {
+    const TEXT_CURSOR: i32 = 3;
+    Application::headless().run(|cx| {
+        let win = open(cx, 220.0, 100.0, ScrollerBesideField);
+        let id = win.id;
+        cx.draw(id);
+        let field = cx.element_bounds(id, "field").unwrap();
+        let (fx, fy) = (field.origin.x + field.size.width * 0.5, field.origin.y + field.size.height * 0.5);
+        cx.simulate_mouse_move(id, fx, fy);
+        assert_eq!(cx.window(id).unwrap().native_cursor(), TEXT_CURSOR, "over the field: its text cursor");
+        for sticky in [false, true] {
+            cx.simulate_mouse_move(id, 50.0, 50.0);
+            cx.simulate_middle(id, 50.0, 50.0, true);
+            if sticky {
+                cx.simulate_middle(id, 50.0, 50.0, false);
+            }
+            assert_eq!(cx.window(id).unwrap().native_cursor(), blenderui::autoscroll::CURSOR_STILL, "sticky {sticky}: the still pan cursor");
+            cx.simulate_mouse_move(id, fx, fy);
+            let heading = blenderui::autoscroll::Heading::of(fy - 50.0);
+            assert_eq!(cx.window(id).unwrap().native_cursor(), heading.cursor(), "sticky {sticky}: the pan cursor kept over the field ({heading:?})");
+            if sticky {
+                cx.simulate_click(id, fx, fy);
+            } else {
+                cx.simulate_middle(id, fx, fy, false);
+            }
+            assert!(!cx.window(id).unwrap().is_autoscrolling());
+            assert_eq!(cx.window(id).unwrap().native_cursor(), TEXT_CURSOR, "sticky {sticky}: ended over the field, its text cursor with no further move");
+        }
+    });
+}
+
 /// A box that hears the wheel and the middle button's press itself (a pan), noting the presses.
 struct Panner {
     downs: std::rc::Rc<std::cell::Cell<usize>>,

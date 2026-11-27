@@ -27,8 +27,6 @@ use blenderui_sys as sys;
 /// How early a timer may fire and still count as due, s.
 pub(crate) const TIMER_SLOP: f64 = 0.0005;
 
-/// The kit's all-scroll cursor (CSS `all-scroll` / `move`), shown during an autoscroll.
-const ALL_SCROLL: i32 = 6;
 
 // ==========================================================================
 // Entities
@@ -902,8 +900,7 @@ impl App {
     pub fn simulate_activation(&mut self, window: WindowId, active: bool) {
         if let Some(win) = self.windows.get_mut(window.0).and_then(|w| w.as_deref_mut()) {
             if win.native.is_none() && win.active != Some(active) {
-                win.active = Some(active);
-                win.dirty = true;
+                win.follow_active(Some(active));
             }
         }
         self.flush();
@@ -973,8 +970,7 @@ unsafe extern "C" fn on_frame(data: *mut c_void, _win: *mut sys::BKWindow) {
             // focus in / out: the kit renders a frame for it, rebuild so views see it
             let active = w.is_active();
             if active != w.active {
-                w.active = active;
-                w.dirty = true;
+                w.follow_active(active);
             }
             if w.dirty {
                 w.rebuild(app);
@@ -2180,11 +2176,11 @@ impl Window {
             sys::BK_EV_MOTION | sys::BK_EV_ENTER => {
                 self.pointer = (x, y);
                 // out of the dead zone from stillness: the next frame starts moving
-                if let Some(a) = &mut self.autoscroll
-                    && a.pointer((x, y))
-                    && a.last.is_none()
-                {
-                    self.dirty = true;
+                if let Some(a) = &mut self.autoscroll {
+                    if a.pointer((x, y)) && a.last.is_none() {
+                        self.dirty = true;
+                    }
+                    self.refresh_cursor(&[]);
                 }
                 if self.bars.drag.is_some() {
                     self.drag_bar(y);
@@ -2397,8 +2393,8 @@ impl Window {
     /// element along `path` that sets one.
     fn refresh_cursor(&mut self, path: &[Key]) {
         let Some(f) = &self.frame else { return };
-        let cursor = if self.autoscroll.is_some() {
-            ALL_SCROLL
+        let cursor = if let Some(a) = &self.autoscroll {
+            crate::autoscroll::Heading::of(self.pointer.1 - a.origin.1).cursor()
         } else {
             path.iter().rev()
                 .find_map(|k| f.by_key().get(k).and_then(|&i| self.caches.styles[f.nodes[i].style].cursor)).unwrap_or(0)
@@ -2422,10 +2418,12 @@ impl Window {
         if claimed {
             return false;
         }
-        let scrolls = path.iter().any(|k| f.by_key().get(k).is_some_and(|&i| {
+        let innermost = path.iter().rev().filter_map(|k| f.by_key().get(k).copied()).find_map(|i| {
             let (rx, ry) = f.nodes[i].scroll_range;
-            rx > 0.0 || ry > 0.0 || f.el(i).and_then(|e| e.listeners.as_deref()).is_some_and(|l| !l.scroll.is_empty())
-        }));
+            let hears_wheel = f.el(i).and_then(|e| e.listeners.as_deref()).is_some_and(|l| !l.scroll.is_empty());
+            (rx > 0.0 || ry > 0.0 || hears_wheel).then_some(ry > 0.0 || hears_wheel)
+        });
+        let scrolls = innermost == Some(true);
         if !scrolls {
             return false;
         }
@@ -2450,9 +2448,25 @@ impl Window {
         self.dirty = true;
     }
 
+    fn follow_active(&mut self, active: Option<bool>) {
+        self.active = active;
+        self.dirty = true;
+        if active == Some(false) {
+            self.stop_autoscroll();
+        }
+    }
+
     /// Whether a middle-button autoscroll is on (held or sticky).
     pub fn is_autoscrolling(&self) -> bool {
         self.autoscroll.is_some()
+    }
+
+    pub fn autoscroll_anchor(&self) -> Option<(f32, f32)> {
+        self.autoscroll.as_ref().map(|a| a.origin)
+    }
+
+    pub fn native_cursor(&self) -> i32 {
+        unsafe { sys::BK_cursor(self.ctx) }
     }
 
     /// The cursor shown (the kit's: 0 default, 3 text, 5 pointer, 6 all-scroll ...).
@@ -2486,7 +2500,7 @@ impl Window {
         if let Some(&deepest) = path.last() {
             self.emit(app, deepest, &e, |l| l.scroll.iter().collect());
         }
-        self.scroll_by(&path, dy, false);
+        self.scroll_on(&path, dy, false, false);
         if !self.scrolled {
             if let Some(a) = &mut self.autoscroll {
                 a.last = None;
@@ -2498,13 +2512,17 @@ impl Window {
 
     /// Scroll the innermost scroll container along `path` that can move.
     fn scroll_by(&mut self, path: &[Key], dy: f32, horizontal: bool) {
+        self.scroll_on(path, dy, horizontal, true);
+    }
+
+    fn scroll_on(&mut self, path: &[Key], dy: f32, horizontal: bool, sideways_when_flat: bool) {
         let Some(f) = &self.frame else { return };
         for key in path.iter().rev() {
             let Some(&i) = f.by_key().get(key) else { continue };
             let n = &f.nodes[i];
             let (rx, ry) = n.scroll_range;
             let (sx, sy) = n.scroll_pos;
-            let (nx, ny) = if horizontal || ry <= 0.0 {
+            let (nx, ny) = if horizontal || (sideways_when_flat && ry <= 0.0) {
                 ((sx + dy).clamp(0.0, rx), sy)
             } else {
                 (sx, (sy + dy).clamp(0.0, ry))

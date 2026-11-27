@@ -497,11 +497,13 @@ static void apply_cursor(BKWindow *win)
   if (!g.pointer || g.pointer_win != win) {
     return;
   }
-  static const char *names[12] = {"left_ptr",   "sb_h_double_arrow", "sb_v_double_arrow",
-                                  "xterm",      "crosshair",         "hand2",
-                                  "fleur",      "left_ptr",          "bottom_left_corner",
-                                  "bottom_right_corner", "X_cursor", "watch"};
-  const int c = BK_CLAMP(win->cursor, 0, 11);
+  static const char *names[BK_CURSOR_COUNT] = {
+      "left_ptr",   "sb_h_double_arrow", "sb_v_double_arrow",   "xterm",
+      "crosshair",  "hand2",             "fleur",               "left_ptr",
+      "bottom_left_corner", "bottom_right_corner", "X_cursor",  "watch",
+      "left_ptr_watch", "sb_v_double_arrow", "sb_up_arrow",     "sb_down_arrow"};
+  static const char *pans[] = {"ns-resize", "n-resize", "s-resize"};
+  const int c = BK_CLAMP(win->cursor, 0, BK_CURSOR_COUNT - 1);
   if (c == BK_CURSOR_NONE) {
     wl_pointer_set_cursor(g.pointer, g.pointer_serial, NULL, 0, 0);
     return;
@@ -509,7 +511,13 @@ static void apply_cursor(BKWindow *win)
   if (!g.cursor_theme || !g.cursor_surface) {
     return;
   }
-  struct wl_cursor *cursor = wl_cursor_theme_get_cursor(g.cursor_theme, names[c]);
+  struct wl_cursor *cursor = NULL;
+  if (c >= BK_CURSOR_SCROLL_NS && c <= BK_CURSOR_SCROLL_S) {
+    cursor = wl_cursor_theme_get_cursor(g.cursor_theme, pans[c - BK_CURSOR_SCROLL_NS]);
+  }
+  if (!cursor) {
+    cursor = wl_cursor_theme_get_cursor(g.cursor_theme, names[c]);
+  }
   if (!cursor || cursor->image_count == 0) {
     return;
   }

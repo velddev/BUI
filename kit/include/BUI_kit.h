@@ -99,6 +99,10 @@ enum {
   BK_CURSOR_NOT_ALLOWED,
   BK_CURSOR_WAIT,
   BK_CURSOR_PROGRESS,  /* busy in the background, still interactive */
+  BK_CURSOR_SCROLL_NS,
+  BK_CURSOR_SCROLL_N,
+  BK_CURSOR_SCROLL_S,
+  BK_CURSOR_COUNT,
 };
 
 /* Callback kinds delivered through BKHost.emit. */

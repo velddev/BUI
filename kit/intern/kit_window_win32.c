@@ -50,6 +50,7 @@ struct BKWindow {
   BKImeWin32 ime;                 /* the IME (GHOST_ImeWin32) */
   WPARAM last_vk;                 /* the virtual key of the last WM_KEYDOWN */
   int titlebar;                   /* "titlebar": the host draws it; no caption */
+  int middle_down;
   int nc_tracking;                /* TME_NONCLIENT leave asked (the maximise button) */
   BKAreas areas;                  /* BK_window_set_areas */
 };
@@ -227,6 +228,11 @@ static void host_request(void *data)
 
 static HCURSOR cursor_handle(int c)
 {
+  if (c >= BK_CURSOR_SCROLL_NS && c <= BK_CURSOR_SCROLL_S) {
+    static const WORD pan_ids[] = {32652, 32655, 32656};
+    HCURSOR pan = LoadCursorW(NULL, MAKEINTRESOURCEW(pan_ids[c - BK_CURSOR_SCROLL_NS]));
+    return pan ? pan : LoadCursorW(NULL, IDC_SIZENS);
+  }
   LPCWSTR id = IDC_ARROW;
   switch (c) {
     case BK_CURSOR_EW:
@@ -410,6 +416,8 @@ static void ime_sync(BKWindow *win)
   bk_ime_win32_begin(&win->ime, win->hwnd, s.x, s.y, s.x, s.y, s.restart != 0);
 }
 
+static void paint_next(BKWindow *win);
+
 static void do_render(BKWindow *win)
 {
   RECT rc;
@@ -450,8 +458,58 @@ static void do_render(BKWindow *win)
   }
   if (BK_animating(win->ctx)) {
     vsync(); /* pace animation frames to the display */
-    host_request(win);
+    paint_next(win);
   }
+}
+
+static void paint_next(BKWindow *win)
+{
+  if (win->hwnd) {
+    win->render_pending = 1;
+    RedrawWindow(win->hwnd, NULL, NULL, RDW_INTERNALPAINT);
+  }
+}
+
+static void run_frame(BKWindow *win)
+{
+  { /* a new size: the host lays out for it before this frame, so no frame shows the
+     * last layout at the new size (centred text would jump back and forth) */
+    RECT rc;
+    GetClientRect(win->hwnd, &rc);
+    if (win->cb.on_frame && (BUI_raster_width(win->raster) != BK_MAX(1, rc.right - rc.left) ||
+                             BUI_raster_height(win->raster) != BK_MAX(1, rc.bottom - rc.top)))
+    {
+      win->want_frame = 1;
+    }
+  }
+  if (win->want_frame && win->cb.on_frame) {
+    /* render_pending is still set: edits made here join this frame */
+    win->want_frame = 0;
+    QueryPerformanceCounter(&win->frame_start);
+    win->cb.on_frame(win->cb.data, win);
+  }
+  win->render_pending = 0;
+  do_render(win);
+  if (win->want_frame) { /* the host asked for the next frame */
+    bk_frame_ms = frame_ms(win);
+    bk_frame_budget_ms = win->frame_vsync ? refresh_ms() : 0.0;
+    if (win->frame_vsync && bk_frame_ms < refresh_ms() - 1.5) {
+      vsync(); /* early: wait for the next refresh; late: start right away */
+    }
+    paint_next(win);
+  }
+  else {
+    bk_frame_ms = 0.0; /* the animation ended */
+  }
+}
+
+static void middle_up(BKWindow *win, int x, int y, int mods)
+{
+  win->middle_down = 0;
+  if (GetCapture() == win->hwnd && GetKeyState(VK_LBUTTON) >= 0) {
+    ReleaseCapture();
+  }
+  BK_button(win->ctx, x, y, 2, 1, mods);
 }
 
 /* -- input mapping -- */
@@ -519,43 +577,25 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
   BKContext *ctx = win->ctx;
   switch (msg) {
     case WM_BK_RENDER:
-      { /* a new size: the host lays out for it before this frame, so no frame shows the
-         * last layout at the new size (centred text would jump back and forth) */
-        RECT rc;
-        GetClientRect(win->hwnd, &rc);
-        if (win->cb.on_frame && (BUI_raster_width(win->raster) != BK_MAX(1, rc.right - rc.left) ||
-                                 BUI_raster_height(win->raster) != BK_MAX(1, rc.bottom - rc.top)))
-        {
-          win->want_frame = 1;
-        }
-      }
-      if (win->want_frame && win->cb.on_frame) {
-        /* render_pending is still set: edits made here join this frame */
-        win->want_frame = 0;
-        QueryPerformanceCounter(&win->frame_start);
-        win->cb.on_frame(win->cb.data, win);
-      }
-      win->render_pending = 0;
-      do_render(win);
-      if (win->want_frame) { /* the host asked for the next frame */
-        bk_frame_ms = frame_ms(win);
-        bk_frame_budget_ms = win->frame_vsync ? refresh_ms() : 0.0;
-        if (win->frame_vsync && bk_frame_ms < refresh_ms() - 1.5) {
-          vsync(); /* early: wait for the next refresh; late: start right away */
-        }
-        host_request(win);
-      }
-      else {
-        bk_frame_ms = 0.0; /* the animation ended */
-      }
+      run_frame(win);
       return 0;
     case WM_PAINT: {
+      const int exposed = GetUpdateRect(hwnd, NULL, FALSE);
       PAINTSTRUCT ps;
       BeginPaint(hwnd, &ps);
       EndPaint(hwnd, &ps);
-      win->full = 1;
-      do_render(win);
-      BUI_raster_present_native(win->raster, hwnd, 1);
+      if (exposed) {
+        win->full = 1;
+      }
+      if (win->render_pending) {
+        run_frame(win);
+      }
+      else {
+        do_render(win);
+      }
+      if (exposed) {
+        BUI_raster_present_native(win->raster, hwnd, 1);
+      }
       return 0;
     }
     case WM_ERASEBKGND:
@@ -663,6 +703,9 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       }
       break;
     case WM_MOUSEMOVE:
+      if (win->middle_down && !(wp & MK_MBUTTON)) {
+        middle_up(win, GET_X_LPARAM(lp), GET_Y_LPARAM(lp), mods_now(wp, 1));
+      }
       if (!win->tracking) {
         TRACKMOUSEEVENT t = {sizeof(t), TME_LEAVE, hwnd, 0};
         TrackMouseEvent(&t);
@@ -682,17 +725,33 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       BK_press(ctx, GET_X_LPARAM(lp), GET_Y_LPARAM(lp), mods_now(wp, 1));
       return 0;
     case WM_LBUTTONUP:
-      ReleaseCapture();
+      if (!win->middle_down) {
+        ReleaseCapture();
+      }
       BK_release(ctx, GET_X_LPARAM(lp), GET_Y_LPARAM(lp), mods_now(wp, 1));
       return 0;
     case WM_RBUTTONDOWN:
       BK_context_menu(ctx, GET_X_LPARAM(lp), GET_Y_LPARAM(lp), mods_now(wp, 1));
       return 0;
     case WM_RBUTTONUP:
+      BK_button(ctx, GET_X_LPARAM(lp), GET_Y_LPARAM(lp), 3, 1, mods_now(wp, 1));
+      return 0;
     case WM_MBUTTONDOWN:
+      win->middle_down = 1;
+      SetCapture(hwnd);
+      BK_button(ctx, GET_X_LPARAM(lp), GET_Y_LPARAM(lp), 2, 0, mods_now(wp, 1));
+      return 0;
     case WM_MBUTTONUP:
-      BK_button(ctx, GET_X_LPARAM(lp), GET_Y_LPARAM(lp), msg == WM_RBUTTONUP ? 3 : 2,
-                msg != WM_MBUTTONDOWN, mods_now(wp, 1));
+      middle_up(win, GET_X_LPARAM(lp), GET_Y_LPARAM(lp), mods_now(wp, 1));
+      return 0;
+    case WM_CAPTURECHANGED:
+      if (win->middle_down && (HWND)lp != hwnd) {
+        POINT p;
+        GetCursorPos(&p);
+        ScreenToClient(hwnd, &p);
+        win->middle_down = 0;
+        BK_button(ctx, p.x, p.y, 2, 1, mods_now(0, 1));
+      }
       return 0;
     case WM_XBUTTONDOWN: /* the side buttons; TRUE: handled, no WM_APPCOMMAND after */
     case WM_XBUTTONUP:
